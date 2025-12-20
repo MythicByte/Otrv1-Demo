@@ -1,0 +1,8 @@
+[package]
+name = "ortv1"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+iced = { version = "0.14.0", features = ["debug"] }
+sqlx = { version = "0.8.6", features = ["sqlite"] }

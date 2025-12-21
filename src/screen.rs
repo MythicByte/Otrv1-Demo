@@ -18,21 +18,27 @@ use iced::{
     Element,
     Length,
     Task,
+    Theme,
     alignment::{
         Horizontal,
         Vertical,
     },
+    theme::palette,
     widget::{
         button,
         column,
         container,
         row,
+        space::horizontal,
         text,
         text_input,
     },
 };
 use openssl::{
-    pkcs12::Pkcs12,
+    pkcs12::{
+        ParsedPkcs12_2,
+        Pkcs12,
+    },
     x509::X509,
 };
 use rfd::AsyncFileDialog;
@@ -40,6 +46,7 @@ use tracing::info;
 
 pub struct Screen {
     pub builderconnectvalues: BuilderConnectValues,
+    pub button: (bool, bool, bool, bool),
 }
 #[derive(Debug, Clone)]
 pub enum ScreenMessage {
@@ -51,6 +58,7 @@ pub enum ScreenMessage {
         fileactiondialog: FileDialogAction,
     },
     PostIp(String),
+    PostPassword(String),
 }
 #[derive(Debug, Clone)]
 pub enum FileDialogAction {
@@ -61,6 +69,7 @@ impl Screen {
     pub fn new() -> Self {
         Self {
             builderconnectvalues: BuilderConnectValues::new(),
+            button: (false, false, false, false),
         }
     }
     pub fn update(&mut self, screenmessage: ScreenMessage) -> Task<ScreenMessage> {
@@ -92,11 +101,13 @@ impl Screen {
                 );
             }
             ScreenMessage::PostIp(ip) => {
+                self.button.2 = true;
                 self.builderconnectvalues.set_ip(ip);
             }
             ScreenMessage::PostFilePath(file_path_with_enum) => {
                 match file_path_with_enum.filedialogacion {
                     FileDialogAction::PkCS12 => {
+                        self.button.1 = true;
                         use std::io::BufReader;
                         let path = file_path_with_enum.path;
                         if let Some(path_checked) = path {
@@ -123,6 +134,7 @@ impl Screen {
                         }
                     }
                     FileDialogAction::X509 => {
+                        self.button.0 = true;
                         use std::io::BufReader;
 
                         let path = file_path_with_enum.path;
@@ -142,32 +154,59 @@ impl Screen {
                                 // Something for Later
                                 // Not needed because in the build function it is checked
                                 let check = builder.set_x509(&buffer_capacity);
-                                info!(
-                                    "X509 File was checked Result: {:?} if Nothing than alls if fine",
-                                    check
-                                );
                             }
                         }
                     }
                 }
             }
-            ScreenMessage::SwitchToMainScreen => return Task::none(),
+            ScreenMessage::SwitchToMainScreen => {
+                return Task::none();
+            }
+            ScreenMessage::PostPassword(password) => {
+                self.builderconnectvalues.set_password(password);
+            }
         }
         Task::none()
     }
     pub fn view(&self) -> Element<'_, ScreenMessage> {
-        let button_file_other_user: Element<'_, ScreenMessage> = button(text("Cert X509"))
+        let button_file_other_user: Element<'_, ScreenMessage> = button(text("Cert X509").center())
             .on_press(ScreenMessage::OpenFileDiaglog {
                 title: "Check Other User Cert X509".to_string(),
                 filter: None,
                 fileactiondialog: FileDialogAction::X509,
             })
+            .style(|theme: &Theme, status| {
+                let palette = theme.extended_palette();
+                if !self.button.0 {
+                    return button::primary(theme, status);
+                }
+                match status {
+                    button::Status::Active => {
+                        if self.builderconnectvalues.x509.is_some() {
+                            button::Style {
+                                background: Some(palette.success.base.color.into()),
+                                text_color: palette.success.base.text,
+                                ..button::Style::default()
+                            }
+                        } else {
+                            button::Style {
+                                background: Some(palette.danger.base.color.into()),
+                                text_color: palette.danger.base.text,
+                                ..button::Style::default()
+                            }
+                        }
+                    }
+                    _ => button::primary(theme, status),
+                }
+            })
+            .width(Length::Fixed(113.0))
             .into();
         let row_cert_other_x509 = row![
             text("Choose Path to Cert from other User"),
+            horizontal().width(Length::Fill),
             container(button_file_other_user)
         ]
-        .spacing(60);
+        .width(Length::Fill);
 
         let button_client_pkcs12: Element<'_, ScreenMessage> = button(text("Cert PKCS12"))
             .on_press(ScreenMessage::OpenFileDiaglog {
@@ -175,26 +214,95 @@ impl Screen {
                 filter: None,
                 fileactiondialog: FileDialogAction::PkCS12,
             })
+            .style(|theme: &Theme, status| {
+                let palette = theme.extended_palette();
+                if !self.button.1 {
+                    return button::primary(theme, status);
+                }
+                match status {
+                    button::Status::Active => {
+                        if self.builderconnectvalues.get_pkcs_correct() {
+                            button::Style {
+                                background: Some(palette.success.base.color.into()),
+                                text_color: palette.success.base.text,
+                                ..Default::default()
+                            }
+                        } else {
+                            button::Style {
+                                background: Some(palette.danger.base.color.into()),
+                                text_color: palette.danger.base.text,
+                                ..Default::default()
+                            }
+                        }
+                    }
+                    _ => button::primary(theme, status),
+                }
+            })
             .into();
-        let row_own_cert_pkcs12 = row![
-            text("Choose Your own Cert and private key"),
-            button_client_pkcs12
-        ]
-        .spacing(50);
+        let input_password_pkcs12: Element<'_, ScreenMessage> =
+            text_input("Password", &self.builderconnectvalues.get_password_stern())
+                .on_input(ScreenMessage::PostPassword)
+                .width(Length::Fixed(100.0))
+                .secure(true)
+                .into();
 
+        let row_own_cert_pkcs12 = row![
+            text("Choose own private key & Cert"),
+            horizontal().width(Length::Fill),
+            button_client_pkcs12,
+            if self.builderconnectvalues.get_pkcs_correct() {
+                input_password_pkcs12
+            } else {
+                row![].into()
+            }
+        ];
         let input_ip: Element<'_, ScreenMessage> = text_input(
             "Ip Adress of the peer ...",
             &self.builderconnectvalues.get_ip(),
         )
         .on_input(ScreenMessage::PostIp)
-        .width(Length::Fixed(130.0))
+        .width(Length::Fixed(180.0))
+        .style(|theme: &Theme, status| {
+            let palette = theme.extended_palette();
+            if !self.button.2 {
+                return text_input::default(theme, status);
+            }
+            if SocketAddr::from_str(&self.builderconnectvalues.get_ip()).is_ok() {
+                text_input::Style {
+                    background: palette.success.base.color.into(),
+                    value: palette.success.base.text,
+                    ..text_input::default(theme, status)
+                }
+            } else {
+                text_input::Style {
+                    background: palette.danger.weak.color.into(),
+                    ..text_input::default(theme, status)
+                }
+            }
+        })
         .into();
-        let row3 = row![text!("IP of the other User"), input_ip].spacing(190);
+        let row3 = row![
+            text!("IP of the other User"),
+            horizontal().width(Length::Fill),
+            input_ip
+        ];
         let button_submit: Element<'_, ScreenMessage> = button(text("Submit"))
             .on_press(ScreenMessage::SwitchToMainScreen)
+            .style(|theme: &Theme, status| {
+                let palette = theme.extended_palette();
+                if self.button.3 {
+                    button::Style {
+                        background: Some(palette.danger.base.color.into()),
+                        text_color: palette.danger.base.text,
+                        ..Default::default()
+                    }
+                } else {
+                    button::primary(theme, status)
+                }
+            })
             .into();
         let column = column![
-            text("Welcome to OTRv1 Client").size(40),
+            text("Welcome to OTRv1 Client").size(42),
             row_cert_other_x509,
             row_own_cert_pkcs12,
             row3,
@@ -202,8 +310,11 @@ impl Screen {
                 .align_y(Vertical::Center)
                 .align_x(Horizontal::Center)
         ]
+        .max_width(500)
         .spacing(10);
         container(column)
+            .height(Length::Fill)
+            .width(Length::Fill)
             .center_x(Length::Fill)
             .center_y(Length::Fill)
             .into()
@@ -211,17 +322,24 @@ impl Screen {
 }
 
 pub struct ConnectValues {
-    cert: Pkcs12,
-    ip: SocketAddr,
-    x509: X509,
+    pub cert: ParsedPkcs12_2,
+    pub ip: SocketAddr,
+    pub x509: X509,
+    pub pkcs_password: String,
 }
 impl ConnectValues {
-    pub fn new(cert: Pkcs12, ip: SocketAddr, x509: X509) -> Self {
-        Self { cert, ip, x509 }
+    pub fn new(cert: ParsedPkcs12_2, ip: SocketAddr, x509: X509, pkcs_password: String) -> Self {
+        Self {
+            cert,
+            ip,
+            x509,
+            pkcs_password,
+        }
     }
 }
 pub struct BuilderConnectValues {
     cert: Option<Pkcs12>,
+    pkcs_passwod: String,
     ip: Option<String>,
     x509: Option<X509>,
 }
@@ -231,6 +349,7 @@ impl BuilderConnectValues {
             cert: None,
             ip: None,
             x509: None,
+            pkcs_passwod: "".to_string(),
         }
     }
     pub fn set_cert_pkcs12(&mut self, input_cert_der: &[u8]) -> anyhow::Result<()> {
@@ -240,11 +359,29 @@ impl BuilderConnectValues {
     pub fn set_ip(&mut self, input_ip: String) {
         self.ip = Some(input_ip);
     }
+    pub fn set_password(&mut self, input_password: String) {
+        self.pkcs_passwod = input_password;
+    }
+    pub fn get_password_stern(&self) -> String {
+        self.pkcs_passwod.clone()
+    }
+    pub fn get_pkcs_correct(&self) -> bool {
+        self.cert.is_some()
+    }
     pub fn build(&mut self) -> anyhow::Result<ConnectValues> {
-        return match (self.cert.take(), self.ip.clone(), self.x509.take()) {
-            (Some(cert), Some(ip), Some(x509)) => {
+        return match (
+            self.cert.take(),
+            self.ip.clone(),
+            self.x509.take(),
+            self.pkcs_passwod.clone(),
+        ) {
+            (Some(cert), Some(ip), Some(x509), pkcs_password) => {
+                let decode_pkcs12 = cert
+                    .parse2(&pkcs_password)
+                    .context("Encryption of the Pkcs12 Failed")?;
                 let ip = SocketAddr::from_str(&ip).context("Parsing to Ip failed")?;
-                Ok(ConnectValues::new(cert, ip, x509))
+                info!("Conversation Succeded and worked. Going to Main Screen");
+                Ok(ConnectValues::new(decode_pkcs12, ip, x509, pkcs_password))
             }
             _ => {
                 info!("The Check of the Sumbit Failed");

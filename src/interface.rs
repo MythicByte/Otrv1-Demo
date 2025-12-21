@@ -1,3 +1,15 @@
+use iced::{
+    Border,
+    Color,
+    Pixels,
+    Theme,
+    border::Radius,
+    widget::{
+        Space,
+        container,
+        rule,
+    },
+};
 use std::str::FromStr;
 
 use anyhow::Context;
@@ -7,8 +19,23 @@ use chrono::{
 };
 use iced::{
     self,
+    Element,
+    Length::{
+        self,
+    },
     Task,
-    widget::container,
+    alignment::{
+        Horizontal,
+        Vertical,
+    },
+    widget::{
+        column,
+        row,
+        scrollable,
+        space::horizontal,
+        text,
+        text_editor,
+    },
 };
 use sqlx::{
     Pool,
@@ -28,6 +55,8 @@ pub struct App {
     pub screen: ScreenDisplay,
     pub connect_values: Option<ConnectValues>,
     sqlite_pool: Pool<Sqlite>,
+    message: text_editor::Content,
+    online: bool,
 }
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -70,6 +99,8 @@ impl App {
             screen: ScreenDisplay::Start(screen::Screen::new()),
             connect_values: None,
             sqlite_pool: pool,
+            message: text_editor::Content::new(),
+            online: false,
         })
     }
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -92,6 +123,7 @@ impl App {
             ) => todo!(),
             (Message::Screen(screen_message), ScreenDisplay::Start(screen)) => {
                 if let ScreenMessage::SwitchToMainScreen = screen_message {
+                    screen.button.3 = true;
                     return Task::done(Message::SwitchToMainScreen);
                 }
                 return screen.update(screen_message).map(Message::Screen);
@@ -107,6 +139,73 @@ impl App {
         };
     }
     fn home(&self) -> iced::Element<'_, Message> {
-        container("Test").into()
+        let title = text("Otrv1 Messaging").size(40).center();
+        let title = container(title).center_x(Length::Fill);
+        let output_column = column![
+            Space::new().height(20),
+            title,
+            Space::new().height(5),
+            self.status_bar(),
+            rule::horizontal(2),
+            self.chat(),
+            self.send_message()
+        ]
+        .spacing(20)
+        .max_width(800);
+        container(output_column)
+            .width(Length::FillPortion(2))
+            .height(Length::FillPortion(2))
+            .align_y(Vertical::Top)
+            .align_x(Horizontal::Center)
+            .into()
+    }
+    fn status_bar(&self) -> Element<'_, Message> {
+        let ip_to_text = text(format!(
+            "IP: {}",
+            if let Some(connect) = &self.connect_values {
+                connect.ip.clone().to_string()
+            } else {
+                "Config Error".to_string()
+            }
+        ))
+        .center();
+        let online_indicator: Element<'_, Message> = container("")
+            .style(|_: &Theme| {
+                let color = if self.online {
+                    Color::from_rgb(0.0, 0.8, 0.5)
+                } else {
+                    Color::from_rgb(0.6, 0.6, 0.6)
+                };
+                container::Style {
+                    background: Some(color.into()),
+                    border: Border::default().rounded(Radius::new(Pixels::from(5))),
+                    ..Default::default()
+                }
+            })
+            .width(10)
+            .height(10)
+            .height(Length::Fixed(10.0))
+            .into();
+        let status_row = row![
+            ip_to_text,
+            horizontal().width(Length::Fill),
+            online_indicator,
+            Space::new().width(5),
+            text(" Online").center(),
+        ]
+        .align_y(Vertical::Center);
+        container(status_row).width(Length::FillPortion(2)).into()
+    }
+    fn chat(&self) -> Element<'_, Message> {
+        let scroll = scrollable(column![text("Test"), text("Test1")]);
+        container(scroll)
+            .height(Length::Fill)
+            .width(Length::Fill)
+            .into()
+    }
+    fn send_message(&self) -> Element<'_, Message> {
+        let text = text_editor(&self.message).placeholder("Message ..");
+        let row = row![text];
+        container(row).into()
     }
 }

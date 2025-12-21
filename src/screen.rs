@@ -18,12 +18,13 @@ use iced::{
     Element,
     Length,
     Task,
+    Theme,
     alignment::{
         Horizontal,
         Vertical,
     },
+    theme::palette,
     widget::{
-        Space,
         button,
         column,
         container,
@@ -42,6 +43,7 @@ use tracing::info;
 
 pub struct Screen {
     pub builderconnectvalues: BuilderConnectValues,
+    pub button: (bool, bool, bool, bool),
 }
 #[derive(Debug, Clone)]
 pub enum ScreenMessage {
@@ -64,6 +66,7 @@ impl Screen {
     pub fn new() -> Self {
         Self {
             builderconnectvalues: BuilderConnectValues::new(),
+            button: (false, false, false, false),
         }
     }
     pub fn update(&mut self, screenmessage: ScreenMessage) -> Task<ScreenMessage> {
@@ -95,11 +98,13 @@ impl Screen {
                 );
             }
             ScreenMessage::PostIp(ip) => {
+                self.button.2 = true;
                 self.builderconnectvalues.set_ip(ip);
             }
             ScreenMessage::PostFilePath(file_path_with_enum) => {
                 match file_path_with_enum.filedialogacion {
                     FileDialogAction::PkCS12 => {
+                        self.button.1 = true;
                         use std::io::BufReader;
                         let path = file_path_with_enum.path;
                         if let Some(path_checked) = path {
@@ -126,6 +131,7 @@ impl Screen {
                         }
                     }
                     FileDialogAction::X509 => {
+                        self.button.0 = true;
                         use std::io::BufReader;
 
                         let path = file_path_with_enum.path;
@@ -150,7 +156,9 @@ impl Screen {
                     }
                 }
             }
-            ScreenMessage::SwitchToMainScreen => return Task::none(),
+            ScreenMessage::SwitchToMainScreen => {
+                return Task::none();
+            }
             ScreenMessage::PostPassword(password) => {
                 self.builderconnectvalues.set_password(password);
             }
@@ -158,12 +166,37 @@ impl Screen {
         Task::none()
     }
     pub fn view(&self) -> Element<'_, ScreenMessage> {
-        let button_file_other_user: Element<'_, ScreenMessage> = button(text("Cert X509"))
+        let button_file_other_user: Element<'_, ScreenMessage> = button(text("Cert X509").center())
             .on_press(ScreenMessage::OpenFileDiaglog {
                 title: "Check Other User Cert X509".to_string(),
                 filter: None,
                 fileactiondialog: FileDialogAction::X509,
             })
+            .style(|theme: &Theme, status| {
+                let palette = theme.extended_palette();
+                if !self.button.0 {
+                    return button::primary(theme, status);
+                }
+                match status {
+                    button::Status::Active => {
+                        if self.builderconnectvalues.x509.is_some() {
+                            button::Style {
+                                background: Some(palette.success.base.color.into()),
+                                text_color: palette.success.base.text,
+                                ..button::Style::default()
+                            }
+                        } else {
+                            button::Style {
+                                background: Some(palette.danger.base.color.into()),
+                                text_color: palette.danger.base.text,
+                                ..button::Style::default()
+                            }
+                        }
+                    }
+                    _ => button::primary(theme, status),
+                }
+            })
+            .width(Length::Fixed(113.0))
             .into();
         let row_cert_other_x509 = row![
             text("Choose Path to Cert from other User"),
@@ -177,6 +210,30 @@ impl Screen {
                 title: "Choose Our own PKCS12 Cert".to_string(),
                 filter: None,
                 fileactiondialog: FileDialogAction::PkCS12,
+            })
+            .style(|theme: &Theme, status| {
+                let palette = theme.extended_palette();
+                if !self.button.1 {
+                    return button::primary(theme, status);
+                }
+                match status {
+                    button::Status::Active => {
+                        if self.builderconnectvalues.get_pkcs_correct() {
+                            button::Style {
+                                background: Some(palette.success.base.color.into()),
+                                text_color: palette.success.base.text,
+                                ..Default::default()
+                            }
+                        } else {
+                            button::Style {
+                                background: Some(palette.danger.base.color.into()),
+                                text_color: palette.danger.base.text,
+                                ..Default::default()
+                            }
+                        }
+                    }
+                    _ => button::primary(theme, status),
+                }
             })
             .into();
         let input_password_pkcs12: Element<'_, ScreenMessage> = text_input(
@@ -204,6 +261,24 @@ impl Screen {
         )
         .on_input(ScreenMessage::PostIp)
         .width(Length::Fixed(180.0))
+        .style(|theme: &Theme, status| {
+            let palette = theme.extended_palette();
+            if !self.button.2 {
+                return text_input::default(theme, status);
+            }
+            if SocketAddr::from_str(&self.builderconnectvalues.get_ip()).is_ok() {
+                text_input::Style {
+                    background: palette.success.base.color.into(),
+                    value: palette.success.base.text,
+                    ..text_input::default(theme, status)
+                }
+            } else {
+                text_input::Style {
+                    background: palette.danger.weak.color.into(),
+                    ..text_input::default(theme, status)
+                }
+            }
+        })
         .into();
         let row3 = row![
             text!("IP of the other User"),
@@ -212,6 +287,18 @@ impl Screen {
         ];
         let button_submit: Element<'_, ScreenMessage> = button(text("Submit"))
             .on_press(ScreenMessage::SwitchToMainScreen)
+            .style(|theme: &Theme, status| {
+                let palette = theme.extended_palette();
+                if self.button.3 {
+                    button::Style {
+                        background: Some(palette.danger.base.color.into()),
+                        text_color: palette.danger.base.text,
+                        ..Default::default()
+                    }
+                } else {
+                    button::primary(theme, status)
+                }
+            })
             .into();
         let column = column![
             text("Welcome to OTRv1 Client").size(42),

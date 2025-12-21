@@ -91,6 +91,7 @@ impl App {
                 ScreenDisplay::Home,
             ) => todo!(),
             (Message::Screen(screen_message), ScreenDisplay::Start(screen)) => {
+                screen.button.3 = true;
                 if let ScreenMessage::SwitchToMainScreen = screen_message {
                     return Task::done(Message::SwitchToMainScreen);
                 }

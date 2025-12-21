@@ -22,3 +22,5 @@ target
 #
 # Disable Sqlite
 otr_demeo.db
+
+/key

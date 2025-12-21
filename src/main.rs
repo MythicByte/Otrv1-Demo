@@ -2,6 +2,7 @@
 pub mod diffie_hellman;
 pub mod interface;
 pub mod message;
+pub mod screen;
 use iced::Theme;
 use interface::App;
 use tracing::{

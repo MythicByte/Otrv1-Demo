@@ -38,10 +38,7 @@ use openssl::{
 use rfd::AsyncFileDialog;
 use tracing::info;
 
-use crate::interface::{
-    App,
-    Message,
-};
+use crate::interface::App;
 pub struct Screen {
     pub builderconnectvalues: BuilderConnectValues,
 }
@@ -159,7 +156,7 @@ impl Screen {
         }
         Task::none()
     }
-    pub fn view(&self, app: &App) -> Element<'_, ScreenMessage> {
+    pub fn view(&self) -> Element<'_, ScreenMessage> {
         let button_file_other_user: Element<'_, ScreenMessage> = button(text("Cert X509"))
             .on_press(ScreenMessage::OpenFileDiaglog {
                 title: "Check Other User Cert X509".to_string(),

@@ -25,7 +25,7 @@ use crate::screen::{
     ScreenMessage,
 };
 pub struct App {
-    pub screen: Screen_Display,
+    pub screen: ScreenDisplay,
     pub connect_values: Option<ConnectValues>,
     sqlite_pool: Pool<Sqlite>,
 }
@@ -39,7 +39,7 @@ pub enum Message {
     },
     Screen(screen::ScreenMessage),
 }
-pub enum Screen_Display {
+pub enum ScreenDisplay {
     Start(Screen),
     Home,
 }
@@ -67,19 +67,19 @@ impl App {
         });
         info!("Sqlite Pool worked and connected");
         Ok(Self {
-            screen: Screen_Display::Start(screen::Screen::new()),
+            screen: ScreenDisplay::Start(screen::Screen::new()),
             connect_values: None,
             sqlite_pool: pool,
         })
     }
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match (message, &mut self.screen) {
-            (Message::SwitchToMainScreen, Screen_Display::Start(screen)) => {
+            (Message::SwitchToMainScreen, ScreenDisplay::Start(screen)) => {
                 let build = &mut screen.builderconnectvalues;
                 let conversation_pkcs12 = build.build();
                 if let Ok(conversation) = conversation_pkcs12 {
                     self.connect_values = Some(conversation);
-                    self.screen = Screen_Display::Home;
+                    self.screen = ScreenDisplay::Home;
                 }
             }
             (
@@ -88,9 +88,9 @@ impl App {
                     date_of_message,
                     person_from,
                 },
-                Screen_Display::Home,
+                ScreenDisplay::Home,
             ) => todo!(),
-            (Message::Screen(screen_message), Screen_Display::Start(screen)) => {
+            (Message::Screen(screen_message), ScreenDisplay::Start(screen)) => {
                 if let ScreenMessage::SwitchToMainScreen = screen_message {
                     return Task::done(Message::SwitchToMainScreen);
                 }
@@ -102,8 +102,8 @@ impl App {
     }
     pub fn view(&self) -> iced::Element<'_, Message> {
         return match &self.screen {
-            Screen_Display::Start(screen) => screen.view(&self).map(Message::Screen),
-            Screen_Display::Home => Self::home(&self),
+            ScreenDisplay::Start(screen) => screen.view().map(Message::Screen),
+            ScreenDisplay::Home => Self::home(&self),
         };
     }
     fn home(&self) -> iced::Element<'_, Message> {

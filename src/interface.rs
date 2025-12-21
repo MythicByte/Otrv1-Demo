@@ -6,6 +6,7 @@ use iced::{
     border::Radius,
     widget::{
         Space,
+        button,
         container,
         rule,
     },
@@ -67,6 +68,8 @@ pub enum Message {
         person_from: u8,
     },
     Screen(screen::ScreenMessage),
+    POSTChangeTextField(text_editor::Action),
+    PostMessageToPeer,
 }
 pub enum ScreenDisplay {
     Start(Screen),
@@ -84,7 +87,7 @@ impl App {
             .create_if_missing(true);
         let pool = rt.block_on(async {
             let pool = SqlitePoolOptions::new()
-                .max_connections(2)
+                .max_connections(4)
                 .connect_with(sqlite)
                 .await
                 .expect("Sqlite Pool failed");
@@ -127,6 +130,19 @@ impl App {
                     return Task::done(Message::SwitchToMainScreen);
                 }
                 return screen.update(screen_message).map(Message::Screen);
+            }
+            (Message::POSTChangeTextField(action), ScreenDisplay::Home) => {
+                self.message.perform(action);
+            }
+            (Message::PostMessageToPeer, ScreenDisplay::Home) => {
+                if self.message.is_empty() || self.online == false {
+                    return Task::none();
+                }
+                let text = self.message.text();
+
+                // Refreshed the text edit
+                self.message = text_editor::Content::new();
+                // To the Async Function that sends the code
             }
             _ => return Task::none(),
         }
@@ -204,8 +220,12 @@ impl App {
             .into()
     }
     fn send_message(&self) -> Element<'_, Message> {
-        let text = text_editor(&self.message).placeholder("Message ..");
-        let row = row![text];
+        let text_editor = text_editor(&self.message)
+            .placeholder("Message ..")
+            .on_action(Message::POSTChangeTextField);
+        let button_submit_message =
+            button(text("Submit").center()).on_press(Message::PostMessageToPeer);
+        let row = row![text_editor, Space::new().width(10), button_submit_message];
         container(row).into()
     }
 }

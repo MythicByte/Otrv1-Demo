@@ -38,7 +38,6 @@ use openssl::{
 use rfd::AsyncFileDialog;
 use tracing::info;
 
-use crate::interface::App;
 pub struct Screen {
     pub builderconnectvalues: BuilderConnectValues,
 }
@@ -73,7 +72,7 @@ impl Screen {
             } => {
                 return Task::perform(
                     async {
-                        let file_dialog = AsyncFileDialog::new();
+                        let file_dialog = AsyncFileDialog::new().set_title(title);
                         let file_dialog = match filter {
                             Some(filter_checked) => file_dialog
                                 .add_filter(filter_checked.clone(), filter_checked.as_bytes()),
@@ -115,7 +114,7 @@ impl Screen {
                                 // Check Result can be ignored or checked
                                 // Something for Later
                                 // Not needed because in the build function it is checked
-                                let check = builder.set_cert(&buffer_file);
+                                let check = builder.set_cert_pkcs12(&buffer_file);
                                 info!(
                                     "PCKS File was checked Result: {:?} if Nothing than alls if fine",
                                     check
@@ -133,16 +132,16 @@ impl Screen {
                             if let Ok(file_open) = file_output
                                 && let Ok(file_data) = fs::metadata(path_checked.as_path())
                             {
-                                let mut buffer_file = Vec::with_capacity(
+                                let mut buffer_capacity = Vec::with_capacity(
                                     file_data.len().try_into().unwrap_or_else(|_| usize::MAX),
                                 );
                                 // Can be adde Later
                                 let buff_reader =
-                                    BufReader::new(file_open).read_to_end(&mut buffer_file);
+                                    BufReader::new(file_open).read_to_end(&mut buffer_capacity);
                                 // Check Result can be ignored or checked
                                 // Something for Later
                                 // Not needed because in the build function it is checked
-                                let check = builder.set_cert(&buffer_file);
+                                let check = builder.set_x509(&buffer_capacity);
                                 info!(
                                     "X509 File was checked Result: {:?} if Nothing than alls if fine",
                                     check
@@ -234,7 +233,7 @@ impl BuilderConnectValues {
             x509: None,
         }
     }
-    pub fn set_cert(&mut self, input_cert_der: &[u8]) -> anyhow::Result<()> {
+    pub fn set_cert_pkcs12(&mut self, input_cert_der: &[u8]) -> anyhow::Result<()> {
         self.cert = Some(Pkcs12::from_der(input_cert_der).context("Parsing from Pkcs12 Failed")?);
         Ok(())
     }
@@ -264,7 +263,9 @@ impl BuilderConnectValues {
         output
     }
     pub fn set_x509(&mut self, input: &[u8]) -> anyhow::Result<()> {
-        let x509_parsed = X509::from_der(input).context("Parser Failed for the X509 Cert")?;
+        let x509_parsed = X509::from_pem(input)
+            .or_else(|_| X509::from_der(input))
+            .context("Parser Failed for the X509 Cert")?;
         self.x509 = Some(x509_parsed);
         Ok(())
     }

@@ -2,10 +2,12 @@
 pub mod diffie_hellman;
 pub mod interface;
 pub mod message;
-use anyhow::Context;
 use iced::Theme;
 use interface::App;
-use tracing::{info, Level};
+use tracing::{
+    Level,
+    info,
+};
 use tracing_subscriber::FmtSubscriber;
 fn main() -> iced::Result {
     let subscriber = FmtSubscriber::builder()
@@ -19,5 +21,6 @@ fn main() -> iced::Result {
     iced::application(App::new, App::update, App::view)
         .theme(Theme::Dark)
         .title("OTRv1 Demo Project")
+        .centered()
         .run()
 }

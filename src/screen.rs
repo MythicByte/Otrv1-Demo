@@ -35,7 +35,10 @@ use iced::{
     },
 };
 use openssl::{
-    pkcs12::Pkcs12,
+    pkcs12::{
+        ParsedPkcs12_2,
+        Pkcs12,
+    },
     x509::X509,
 };
 use rfd::AsyncFileDialog;
@@ -236,14 +239,12 @@ impl Screen {
                 }
             })
             .into();
-        let input_password_pkcs12: Element<'_, ScreenMessage> = text_input(
-            "PKCS12 Password",
-            &self.builderconnectvalues.get_password_stern(),
-        )
-        .on_input(ScreenMessage::PostPassword)
-        .width(Length::Fixed(140.0))
-        .secure(true)
-        .into();
+        let input_password_pkcs12: Element<'_, ScreenMessage> =
+            text_input("Password", &self.builderconnectvalues.get_password_stern())
+                .on_input(ScreenMessage::PostPassword)
+                .width(Length::Fixed(100.0))
+                .secure(true)
+                .into();
 
         let row_own_cert_pkcs12 = row![
             text("Choose own private key & Cert"),
@@ -321,13 +322,13 @@ impl Screen {
 }
 
 pub struct ConnectValues {
-    cert: Pkcs12,
-    ip: SocketAddr,
-    x509: X509,
-    pkcs_password: String,
+    pub cert: ParsedPkcs12_2,
+    pub ip: SocketAddr,
+    pub x509: X509,
+    pub pkcs_password: String,
 }
 impl ConnectValues {
-    pub fn new(cert: Pkcs12, ip: SocketAddr, x509: X509, pkcs_password: String) -> Self {
+    pub fn new(cert: ParsedPkcs12_2, ip: SocketAddr, x509: X509, pkcs_password: String) -> Self {
         Self {
             cert,
             ip,
@@ -362,7 +363,7 @@ impl BuilderConnectValues {
         self.pkcs_passwod = input_password;
     }
     pub fn get_password_stern(&self) -> String {
-        "*".repeat(self.pkcs_passwod.len())
+        self.pkcs_passwod.clone()
     }
     pub fn get_pkcs_correct(&self) -> bool {
         self.cert.is_some()
@@ -375,9 +376,12 @@ impl BuilderConnectValues {
             self.pkcs_passwod.clone(),
         ) {
             (Some(cert), Some(ip), Some(x509), pkcs_password) => {
+                let decode_pkcs12 = cert
+                    .parse2(&pkcs_password)
+                    .context("Encryption of the Pkcs12 Failed")?;
                 let ip = SocketAddr::from_str(&ip).context("Parsing to Ip failed")?;
                 info!("Conversation Succeded and worked. Going to Main Screen");
-                Ok(ConnectValues::new(cert, ip, x509, pkcs_password))
+                Ok(ConnectValues::new(decode_pkcs12, ip, x509, pkcs_password))
             }
             _ => {
                 info!("The Check of the Sumbit Failed");

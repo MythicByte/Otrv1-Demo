@@ -14,6 +14,7 @@ use tokio::{
     io::Interest,
     net::TcpListener,
 };
+use tracing::info;
 #[derive(Debug, Serialize, Deserialize)]
 pub enum MessageSend {
     Encrypted {
@@ -43,6 +44,7 @@ pub enum MessageSend {
     },
 }
 pub async fn connect_to_other_peer(app: &App) -> Subscription<Message> {
+    info!("Listening");
     if let Some(connect_some) = &app.connect_values {
         let ip_tcp_bind = match TcpListener::bind(connect_some.ip).await {
             Ok(correct_value) => correct_value,
@@ -52,12 +54,13 @@ pub async fn connect_to_other_peer(app: &App) -> Subscription<Message> {
             Ok(ip) => ip,
             Err(_) => return Subscription::none(),
         };
+        info!("Connection Connected, with not Problems");
         loop {
             let read_message = match ip.0.ready(Interest::READABLE).await {
                 Ok(correct) => correct,
                 Err(_) => return Subscription::none(),
             };
-            Subscription::run(Task::run(stream, f))
+            // Subscription::run(Task::run(stream, f))
         }
     }
     Subscription::none()

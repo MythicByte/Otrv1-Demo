@@ -2,13 +2,17 @@ use iced::{
     Border,
     Color,
     Pixels,
+    Subscription,
     Theme,
+    application::ViewFn,
     border::Radius,
+    futures::future::UnwrapOrElse,
     widget::{
         Space,
         button,
         container,
         rule,
+        scrollable::Viewport,
     },
 };
 use std::str::FromStr;
@@ -44,13 +48,23 @@ use sqlx::{
     sqlite::SqlitePoolOptions,
 };
 use tokio::runtime::Runtime;
-use tracing::info;
+use tracing::{
+    error,
+    info,
+};
 
-use crate::screen::{
-    self,
-    ConnectValues,
-    Screen,
-    ScreenMessage,
+use crate::{
+    db::{
+        self,
+        read_all_user,
+        write_db,
+    },
+    screen::{
+        self,
+        ConnectValues,
+        Screen,
+        ScreenMessage,
+    },
 };
 pub struct App {
     pub screen: ScreenDisplay,
@@ -58,6 +72,7 @@ pub struct App {
     sqlite_pool: Pool<Sqlite>,
     message: text_editor::Content,
     online: bool,
+    list_message: Option<Vec<db::Message>>,
 }
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -70,6 +85,9 @@ pub enum Message {
     Screen(screen::ScreenMessage),
     POSTChangeTextField(text_editor::Action),
     PostMessageToPeer,
+    CheckDBError(u8),
+    ScrollDisplay(Viewport),
+    PutListValues(Vec<db::Message>),
 }
 pub enum ScreenDisplay {
     Start(Screen),
@@ -104,6 +122,7 @@ impl App {
             sqlite_pool: pool,
             message: text_editor::Content::new(),
             online: false,
+            list_message: None,
         })
     }
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -123,7 +142,23 @@ impl App {
                     person_from,
                 },
                 ScreenDisplay::Home,
-            ) => todo!(),
+            ) => {
+                return Task::perform(
+                    write_db(
+                        self.sqlite_pool.clone(),
+                        message_text,
+                        date_of_message,
+                        person_from,
+                    ),
+                    |x| {
+                        let x = match x {
+                            Ok(_) => 0,
+                            Err(_) => 1,
+                        };
+                        Message::CheckDBError(x)
+                    },
+                );
+            }
             (Message::Screen(screen_message), ScreenDisplay::Start(screen)) => {
                 if let ScreenMessage::SwitchToMainScreen = screen_message {
                     screen.button.3 = true;
@@ -143,6 +178,23 @@ impl App {
                 // Refreshed the text edit
                 self.message = text_editor::Content::new();
                 // To the Async Function that sends the code
+            }
+            (Message::CheckDBError(value), _) => {
+                if value == 1 {
+                    error!("Db writing Failed");
+                }
+            }
+            (Message::ScrollDisplay(viewport), ScreenDisplay::Home) => {
+                return Task::perform({ read_all_user(self.sqlite_pool.clone()) }, |x| {
+                    let x = match x {
+                        Ok(correct) => correct,
+                        Err(_) => Vec::new(),
+                    };
+                    Message::PutListValues(x)
+                });
+            }
+            (Message::PutListValues(values), ScreenDisplay::Home) => {
+                self.list_message = Some(values);
             }
             _ => return Task::none(),
         }
@@ -213,7 +265,8 @@ impl App {
         container(status_row).width(Length::FillPortion(2)).into()
     }
     fn chat(&self) -> Element<'_, Message> {
-        let scroll = scrollable(column![text("Test"), text("Test1")]);
+        let scroll = scrollable(column![text("Test"), text("Test1")])
+            .on_scroll(|x| Message::ScrollDisplay(x));
         container(scroll)
             .height(Length::Fill)
             .width(Length::Fill)
@@ -227,5 +280,9 @@ impl App {
             button(text("Submit").center()).on_press(Message::PostMessageToPeer);
         let row = row![text_editor, Space::new().width(10), button_submit_message];
         container(row).into()
+    }
+    pub fn subscribstions(&self) -> Subscription<Message> {
+        Subscription::none()
+        // Subscription::batch(vec![connect_to_other_peer(&self)])
     }
 }

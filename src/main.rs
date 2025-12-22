@@ -1,7 +1,10 @@
 #![deny(clippy::all)]
+pub mod data_types;
+pub mod db;
 pub mod diffie_hellman;
 pub mod interface;
 pub mod message;
+pub mod net;
 pub mod screen;
 use iced::Theme;
 use interface::App;
@@ -21,6 +24,7 @@ fn main() -> iced::Result {
     openssl::init();
     iced::application(App::new, App::update, App::view)
         .theme(Theme::Dark)
+        .subscription(App::subscribstions)
         .title("OTRv1 Demo Project")
         .centered()
         .run()

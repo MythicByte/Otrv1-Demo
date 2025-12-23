@@ -2,11 +2,9 @@ use iced::{
     Border,
     Color,
     Pixels,
-    Subscription,
     Theme,
-    application::ViewFn,
     border::Radius,
-    futures::future::UnwrapOrElse,
+    futures::lock::Mutex,
     widget::{
         Space,
         button,
@@ -15,7 +13,10 @@ use iced::{
         scrollable::Viewport,
     },
 };
-use std::str::FromStr;
+use std::{
+    str::FromStr,
+    sync::Arc,
+};
 
 use anyhow::Context;
 use chrono::{
@@ -59,6 +60,11 @@ use crate::{
         read_all_user,
         write_db,
     },
+    net::{
+        ServerClientModell,
+        diffie_hellman_check,
+        setup_connection,
+    },
     screen::{
         self,
         ConnectValues,
@@ -76,6 +82,9 @@ pub struct App {
 }
 #[derive(Debug, Clone)]
 pub enum Message {
+    ConnectRightUser((Arc<Mutex<tokio::net::TcpStream>>)),
+    SwitchStartScreen,
+    CheckConnection(Arc<Mutex<tokio::net::TcpStream>>, ServerClientModell),
     SwitchToMainScreen,
     MessageInsert {
         message_text: String,
@@ -131,8 +140,17 @@ impl App {
                 let build = &mut screen.builderconnectvalues;
                 let conversation_pkcs12 = build.build();
                 if let Ok(conversation) = conversation_pkcs12 {
+                    let ip_clone_for_later = conversation.ip.clone();
                     self.connect_values = Some(conversation);
                     self.screen = ScreenDisplay::Home;
+                    return Task::perform(setup_connection(ip_clone_for_later), |x| match x {
+                        Ok((correct_tcpstream, user)) => {
+                            Message::CheckConnection(Arc::new(Mutex::new(correct_tcpstream)), user)
+                        }
+                        Err(_) => Message::SwitchStartScreen,
+                    });
+                } else {
+                    return Task::done(Message::SwitchStartScreen);
                 }
             }
             (
@@ -195,6 +213,40 @@ impl App {
             }
             (Message::PutListValues(values), ScreenDisplay::Home) => {
                 self.list_message = Some(values);
+            }
+            (Message::SwitchStartScreen, ScreenDisplay::Home) => {
+                self.screen = ScreenDisplay::Start(Screen::new());
+            }
+            (Message::CheckConnection(stream, user), ScreenDisplay::Home) => {
+                if let Some(connected_values) = &self.connect_values {
+                    info!("Beginning the Diffie Hellman Check");
+                    let public_key = match connected_values.x509.public_key() {
+                        Ok(correct) => correct,
+                        Err(_) => return Task::done(Message::SwitchStartScreen),
+                    };
+                    return Task::perform(
+                        diffie_hellman_check(
+                            stream,
+                            user,
+                            connected_values.cert.pkey.clone(),
+                            public_key,
+                        ),
+                        |x| {
+                            dbg!(&x);
+                            let x = match x {
+                                Ok(correct) => correct,
+                                Err(error) => {
+                                    error!("Error with Diffie Hellman {}", error);
+                                    return Message::SwitchStartScreen;
+                                }
+                            };
+                            Message::ConnectRightUser(x)
+                        },
+                    );
+                }
+            }
+            (Message::ConnectRightUser(stream), ScreenDisplay::Home) => {
+                info!("DH was succesful");
             }
             _ => return Task::none(),
         }
@@ -280,9 +332,5 @@ impl App {
             button(text("Submit").center()).on_press(Message::PostMessageToPeer);
         let row = row![text_editor, Space::new().width(10), button_submit_message];
         container(row).into()
-    }
-    pub fn subscribstions(&self) -> Subscription<Message> {
-        Subscription::none()
-        // Subscription::batch(vec![connect_to_other_peer(&self)])
     }
 }

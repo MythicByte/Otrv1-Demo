@@ -6,12 +6,13 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.100"
 chrono = "0.4.42"
-iced = { version = "0.14.0", features = ["debug", "tokio"] }
+iced = { version = "0.14.0", features = ["debug", "sipper", "tokio"] }
 openssl = { version = "0.10.75", features = ["vendored"] }
-postcard = "1.1.3"
+postcard = { version = "1.1.3", features = ["alloc"] }
 rfd = "0.16.0"
 serde = { version = "1.0.228", features = ["derive"] }
 sqlx = { version = "0.8.6", features = ["chrono", "migrate", "runtime-tokio", "sqlite"] }
+thiserror = "2.0.17"
 tokio = { version = "1.48.0", features = ["rt-multi-thread", "tracing", "tokio-macros", "net", "time", "rt"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["local-time"] }

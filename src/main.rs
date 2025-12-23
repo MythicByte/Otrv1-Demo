@@ -1,7 +1,11 @@
 #![deny(clippy::all)]
+pub mod connection;
+pub mod data_types;
+pub mod db;
 pub mod diffie_hellman;
 pub mod interface;
 pub mod message;
+pub mod net;
 pub mod screen;
 use iced::Theme;
 use interface::App;

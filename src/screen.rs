@@ -23,7 +23,6 @@ use iced::{
         Horizontal,
         Vertical,
     },
-    theme::palette,
     widget::{
         button,
         column,

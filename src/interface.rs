@@ -4,13 +4,19 @@ use iced::{
     Pixels,
     Theme,
     border::Radius,
+    futures::lock::Mutex,
     widget::{
         Space,
+        button,
         container,
         rule,
+        scrollable::Viewport,
     },
 };
-use std::str::FromStr;
+use std::{
+    str::FromStr,
+    sync::Arc,
+};
 
 use anyhow::Context;
 use chrono::{
@@ -43,13 +49,28 @@ use sqlx::{
     sqlite::SqlitePoolOptions,
 };
 use tokio::runtime::Runtime;
-use tracing::info;
+use tracing::{
+    error,
+    info,
+};
 
-use crate::screen::{
-    self,
-    ConnectValues,
-    Screen,
-    ScreenMessage,
+use crate::{
+    db::{
+        self,
+        read_all_user,
+        write_db,
+    },
+    net::{
+        ServerClientModell,
+        diffie_hellman_check,
+        setup_connection,
+    },
+    screen::{
+        self,
+        ConnectValues,
+        Screen,
+        ScreenMessage,
+    },
 };
 pub struct App {
     pub screen: ScreenDisplay,
@@ -57,9 +78,13 @@ pub struct App {
     sqlite_pool: Pool<Sqlite>,
     message: text_editor::Content,
     online: bool,
+    list_message: Option<Vec<db::Message>>,
 }
 #[derive(Debug, Clone)]
 pub enum Message {
+    ConnectRightUser((Arc<Mutex<tokio::net::TcpStream>>)),
+    SwitchStartScreen,
+    CheckConnection(Arc<Mutex<tokio::net::TcpStream>>, ServerClientModell),
     SwitchToMainScreen,
     MessageInsert {
         message_text: String,
@@ -67,6 +92,11 @@ pub enum Message {
         person_from: u8,
     },
     Screen(screen::ScreenMessage),
+    POSTChangeTextField(text_editor::Action),
+    PostMessageToPeer,
+    CheckDBError(u8),
+    ScrollDisplay(Viewport),
+    PutListValues(Vec<db::Message>),
 }
 pub enum ScreenDisplay {
     Start(Screen),
@@ -84,7 +114,7 @@ impl App {
             .create_if_missing(true);
         let pool = rt.block_on(async {
             let pool = SqlitePoolOptions::new()
-                .max_connections(2)
+                .max_connections(4)
                 .connect_with(sqlite)
                 .await
                 .expect("Sqlite Pool failed");
@@ -101,6 +131,7 @@ impl App {
             sqlite_pool: pool,
             message: text_editor::Content::new(),
             online: false,
+            list_message: None,
         })
     }
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -109,8 +140,17 @@ impl App {
                 let build = &mut screen.builderconnectvalues;
                 let conversation_pkcs12 = build.build();
                 if let Ok(conversation) = conversation_pkcs12 {
+                    let ip_clone_for_later = conversation.ip.clone();
                     self.connect_values = Some(conversation);
                     self.screen = ScreenDisplay::Home;
+                    return Task::perform(setup_connection(ip_clone_for_later), |x| match x {
+                        Ok((correct_tcpstream, user)) => {
+                            Message::CheckConnection(Arc::new(Mutex::new(correct_tcpstream)), user)
+                        }
+                        Err(_) => Message::SwitchStartScreen,
+                    });
+                } else {
+                    return Task::done(Message::SwitchStartScreen);
                 }
             }
             (
@@ -120,13 +160,93 @@ impl App {
                     person_from,
                 },
                 ScreenDisplay::Home,
-            ) => todo!(),
+            ) => {
+                return Task::perform(
+                    write_db(
+                        self.sqlite_pool.clone(),
+                        message_text,
+                        date_of_message,
+                        person_from,
+                    ),
+                    |x| {
+                        let x = match x {
+                            Ok(_) => 0,
+                            Err(_) => 1,
+                        };
+                        Message::CheckDBError(x)
+                    },
+                );
+            }
             (Message::Screen(screen_message), ScreenDisplay::Start(screen)) => {
                 if let ScreenMessage::SwitchToMainScreen = screen_message {
                     screen.button.3 = true;
                     return Task::done(Message::SwitchToMainScreen);
                 }
                 return screen.update(screen_message).map(Message::Screen);
+            }
+            (Message::POSTChangeTextField(action), ScreenDisplay::Home) => {
+                self.message.perform(action);
+            }
+            (Message::PostMessageToPeer, ScreenDisplay::Home) => {
+                if self.message.is_empty() || self.online == false {
+                    return Task::none();
+                }
+                let text = self.message.text();
+
+                // Refreshed the text edit
+                self.message = text_editor::Content::new();
+                // To the Async Function that sends the code
+            }
+            (Message::CheckDBError(value), _) => {
+                if value == 1 {
+                    error!("Db writing Failed");
+                }
+            }
+            (Message::ScrollDisplay(viewport), ScreenDisplay::Home) => {
+                return Task::perform({ read_all_user(self.sqlite_pool.clone()) }, |x| {
+                    let x = match x {
+                        Ok(correct) => correct,
+                        Err(_) => Vec::new(),
+                    };
+                    Message::PutListValues(x)
+                });
+            }
+            (Message::PutListValues(values), ScreenDisplay::Home) => {
+                self.list_message = Some(values);
+            }
+            (Message::SwitchStartScreen, ScreenDisplay::Home) => {
+                self.screen = ScreenDisplay::Start(Screen::new());
+            }
+            (Message::CheckConnection(stream, user), ScreenDisplay::Home) => {
+                if let Some(connected_values) = &self.connect_values {
+                    info!("Beginning the Diffie Hellman Check");
+                    let public_key = match connected_values.x509.public_key() {
+                        Ok(correct) => correct,
+                        Err(_) => return Task::done(Message::SwitchStartScreen),
+                    };
+                    return Task::perform(
+                        diffie_hellman_check(
+                            stream,
+                            user,
+                            connected_values.cert.pkey.clone(),
+                            public_key,
+                        ),
+                        |x| {
+                            dbg!(&x);
+                            let x = match x {
+                                Ok(correct) => correct,
+                                Err(error) => {
+                                    error!("Error with Diffie Hellman {}", error);
+                                    return Message::SwitchStartScreen;
+                                }
+                            };
+                            Message::ConnectRightUser(x)
+                        },
+                    );
+                }
+            }
+            (Message::ConnectRightUser(stream), ScreenDisplay::Home) => {
+                info!("DH was succesful");
             }
             _ => return Task::none(),
         }
@@ -197,15 +317,20 @@ impl App {
         container(status_row).width(Length::FillPortion(2)).into()
     }
     fn chat(&self) -> Element<'_, Message> {
-        let scroll = scrollable(column![text("Test"), text("Test1")]);
+        let scroll = scrollable(column![text("Test"), text("Test1")])
+            .on_scroll(|x| Message::ScrollDisplay(x));
         container(scroll)
             .height(Length::Fill)
             .width(Length::Fill)
             .into()
     }
     fn send_message(&self) -> Element<'_, Message> {
-        let text = text_editor(&self.message).placeholder("Message ..");
-        let row = row![text];
+        let text_editor = text_editor(&self.message)
+            .placeholder("Message ..")
+            .on_action(Message::POSTChangeTextField);
+        let button_submit_message =
+            button(text("Submit").center()).on_press(Message::PostMessageToPeer);
+        let row = row![text_editor, Space::new().width(10), button_submit_message];
         container(row).into()
     }
 }

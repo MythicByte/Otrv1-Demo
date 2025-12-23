@@ -2,6 +2,7 @@ use iced::{
     Border,
     Color,
     Pixels,
+    Subscription,
     Theme,
     border::Radius,
     futures::lock::Mutex,
@@ -79,10 +80,11 @@ pub struct App {
     message: text_editor::Content,
     online: bool,
     list_message: Option<Vec<db::Message>>,
+    stream: Option<Arc<Mutex<tokio::net::TcpStream>>>,
 }
 #[derive(Debug, Clone)]
 pub enum Message {
-    ConnectRightUser((Arc<Mutex<tokio::net::TcpStream>>)),
+    ConnectRightUser(Arc<Mutex<tokio::net::TcpStream>>, Vec<u8>),
     SwitchStartScreen,
     CheckConnection(Arc<Mutex<tokio::net::TcpStream>>, ServerClientModell),
     SwitchToMainScreen,
@@ -132,6 +134,7 @@ impl App {
             message: text_editor::Content::new(),
             online: false,
             list_message: None,
+            stream: None,
         })
     }
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -232,7 +235,6 @@ impl App {
                             public_key,
                         ),
                         |x| {
-                            dbg!(&x);
                             let x = match x {
                                 Ok(correct) => correct,
                                 Err(error) => {
@@ -240,13 +242,19 @@ impl App {
                                     return Message::SwitchStartScreen;
                                 }
                             };
-                            Message::ConnectRightUser(x)
+                            Message::ConnectRightUser(x.0, x.1)
                         },
                     );
                 }
             }
-            (Message::ConnectRightUser(stream), ScreenDisplay::Home) => {
+            (Message::ConnectRightUser(stream, key), ScreenDisplay::Home) => {
+                self.online = true;
+                self.stream = Some(stream.clone());
                 info!("DH was succesful");
+                let (sender, receiver): (
+                    tokio::sync::mpsc::Sender<Task<Message>>,
+                    tokio::sync::mpsc::Receiver<Task<Message>>,
+                ) = tokio::sync::mpsc::channel(100);
             }
             _ => return Task::none(),
         }
@@ -332,5 +340,11 @@ impl App {
             button(text("Submit").center()).on_press(Message::PostMessageToPeer);
         let row = row![text_editor, Space::new().width(10), button_submit_message];
         container(row).into()
+    }
+    pub fn subscribtions(&self) -> Subscription<Message> {
+        if self.online {
+            // return Task::done(Message::SwitchStartScreen);
+        }
+        Subscription::none()
     }
 }

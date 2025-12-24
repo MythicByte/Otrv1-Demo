@@ -3,10 +3,13 @@ use std::{
     sync::Arc,
 };
 
-use iced::futures::lock::Mutex;
 use openssl::{
+    bn::BigNum,
     dh::Dh,
-    hash::MessageDigest,
+    hash::{
+        Hasher,
+        MessageDigest,
+    },
     pkey::{
         PKey,
         Private,
@@ -31,25 +34,19 @@ use tokio::{
         TcpListener,
         TcpStream,
     },
+    sync::Mutex,
 };
 use tracing::info;
-#[derive(Debug, Serialize, Deserialize)]
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub enum MessageSend {
     Encrypted {
-        content: String,
-        mac: String,
-        old_mac_key: String,
-        new_open_key: String,
+        content: Vec<u8>,
+        mac: Vec<u8>,
+        old_mac_key: Vec<u8>,
+        new_open_key: Vec<u8>,
     },
     Exit,
-    ReykyingDiffieHellman {
-        open_key: Vec<u8>,
-        group: Vec<u8>,
-        prime: Vec<u8>,
-    },
-    ReykyingDiffieHellmanAnswer {
-        open_key: Vec<u8>,
-    },
 }
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct DiffieHellmanSend {
@@ -87,13 +84,15 @@ pub enum ErrorDiffieHellman {
     ErrorDHSignedWrong,
     #[error("Reading or Writing from/to Stream error")]
     ReadOrWritingProblem(#[from] std::io::Error),
+    #[error("Openssl hat thrown a error")]
+    OpenSSL(#[from] openssl::error::ErrorStack),
 }
 pub async fn diffie_hellman_check(
     tcpstream: Arc<Mutex<tokio::net::TcpStream>>,
     client_or_server: ServerClientModell,
     key_for_signing: Option<PKey<Private>>,
     pub_key_for_checking: PKey<Public>,
-) -> Result<Arc<Mutex<tokio::net::TcpStream>>, ErrorDiffieHellman> {
+) -> Result<(Arc<Mutex<tokio::net::TcpStream>>, Vec<u8>), ErrorDiffieHellman> {
     let key_for_signing = match key_for_signing {
         Some(x) => x,
         None => return Err(ErrorDiffieHellman::SigningKeyNotThere),
@@ -146,9 +145,14 @@ pub async fn diffie_hellman_check(
                 .verify(&result_final.signed)
                 .map_err(|_| ErrorDiffieHellman::VerfifierError)?;
             if check_if_other_user_correct {
+                let number = BigNum::from_slice(&result)?;
+                let final_dffie_hellman = diffie_hellman_key.compute_key(&number)?;
+                let mut final_symmetrik_key = Hasher::new(MessageDigest::sha3_256())?;
+                final_symmetrik_key.update(&final_dffie_hellman)?;
+                let aes_key_256 = final_symmetrik_key.finish()?.to_vec();
                 // Add to the key to the db
                 drop(tcp_have);
-                return Ok(tcpstream);
+                return Ok((tcpstream, aes_key_256));
             } else {
                 return Err(ErrorDiffieHellman::ErrorDHSignedWrong);
             }
@@ -182,9 +186,15 @@ pub async fn diffie_hellman_check(
                 .verify(&result_final.signed)
                 .map_err(|_| ErrorDiffieHellman::VerfifierError)?;
             if check_if_other_user_correct {
+                let number = BigNum::from_slice(&result)?;
+                let final_dffie_hellman = diffie_hellman_key.compute_key(&number)?;
+                let mut final_symmetrik_key = Hasher::new(MessageDigest::sha3_256())?;
+                final_symmetrik_key.update(&final_dffie_hellman)?;
+                let aes_key_256 = final_symmetrik_key.finish()?.to_vec();
                 // Add to the key to the db
+                // Becuase of the Mutex
                 drop(tcp_have);
-                return Ok(tcpstream);
+                return Ok((tcpstream, aes_key_256));
             } else {
                 return Err(ErrorDiffieHellman::ErrorDHSignedWrong);
             }

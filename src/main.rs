@@ -26,7 +26,6 @@ fn main() -> iced::Result {
     iced::application(App::new, App::update, App::view)
         .theme(Theme::Dark)
         .title("OTRv1 Demo Project")
-        .subscription(App::subscribtions)
         .centered()
         .run()
 }

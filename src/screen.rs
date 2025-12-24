@@ -388,16 +388,6 @@ impl BuilderConnectValues {
             }
         };
     }
-    pub fn get_the_numer_of_values_set(&self) -> u8 {
-        let mut output: u8 = 0;
-        if let Some(_) = self.cert {
-            output += 1;
-        }
-        if let Some(_) = self.ip {
-            output += 1;
-        }
-        output
-    }
     pub fn set_x509(&mut self, input: &[u8]) -> anyhow::Result<()> {
         let x509_parsed = X509::from_pem(input)
             .or_else(|_| X509::from_der(input))

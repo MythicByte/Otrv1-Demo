@@ -3,10 +3,6 @@ use std::{
     sync::Arc,
 };
 
-use iced::{
-    Task,
-    futures::lock::Mutex,
-};
 use openssl::{
     bn::BigNum,
     dh::Dh,
@@ -38,27 +34,19 @@ use tokio::{
         TcpListener,
         TcpStream,
     },
+    sync::Mutex,
 };
 use tracing::info;
 
-use crate::interface::Message;
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub enum MessageSend {
     Encrypted {
-        content: String,
-        mac: String,
-        old_mac_key: String,
-        new_open_key: String,
+        content: Vec<u8>,
+        mac: Vec<u8>,
+        old_mac_key: Vec<u8>,
+        new_open_key: Vec<u8>,
     },
     Exit,
-    ReykyingDiffieHellman {
-        open_key: Vec<u8>,
-        group: Vec<u8>,
-        prime: Vec<u8>,
-    },
-    ReykyingDiffieHellmanAnswer {
-        open_key: Vec<u8>,
-    },
 }
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct DiffieHellmanSend {

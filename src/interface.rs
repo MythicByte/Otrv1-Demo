@@ -57,6 +57,10 @@ use sqlx::{
     sqlite::SqlitePoolOptions,
 };
 use tokio::{
+    net::tcp::{
+        OwnedReadHalf,
+        OwnedWriteHalf,
+    },
     runtime::Runtime,
     sync::Mutex,
 };
@@ -101,7 +105,9 @@ pub struct App {
     /// Inline indicator
     online: bool,
     /// TCPStream to the right target
-    stream: Option<Arc<Mutex<tokio::net::TcpStream>>>,
+    // stream: Option<Arc<Mutex<tokio::net::TcpStream>>>,
+    read_stream: Option<Arc<Mutex<OwnedReadHalf>>>,
+    write_stream: Option<Arc<Mutex<OwnedWriteHalf>>>,
     /// Whoch Server Model is
     pub clientservermodell: Option<ServerClientModell>,
     pub list_scrollable: Vec<Nachricht>,
@@ -177,9 +183,11 @@ impl App {
             sqlite_pool: pool,
             message: text_editor::Content::new(),
             online: false,
-            stream: None,
+            // stream: None,
             clientservermodell: None,
             list_scrollable: Vec::new(),
+            read_stream: None,
+            write_stream: None,
         })
     }
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -238,15 +246,21 @@ impl App {
                 self.message = text_editor::Content::new();
                 // To the Async Function that sends the code
                 let local_time = Utc::now();
-                let nachricht = Nachricht::new(text, local_time, 0);
-                let message_to_send = match postcard::to_allocvec(&nachricht) {
-                    Ok(x) => x,
-                    Err(_) => return Task::none(),
+                let send_message = MessageSend::Encrypted {
+                    content: text.as_bytes().to_vec(),
+                    mac: Vec::new(),
+                    old_mac_key: Vec::new(),
+                    new_open_key: Vec::new(),
                 };
-                self.list_scrollable.push(nachricht);
+                let nachricht = Nachricht::new(text, local_time, 0);
+                self.list_scrollable.push(nachricht.clone());
                 info!("nachricht wurde verschickt");
-                if let Some(stream) = &self.stream {
-                    return Task::perform(post_message(stream.clone(), message_to_send), |x| {
+                let send = match postcard::to_allocvec(&send_message) {
+                    Ok(x) => x,
+                    Err(_) => return Task::done(Message::SwitchStartScreen),
+                };
+                if let Some(stream) = &self.write_stream {
+                    return Task::perform(post_message(stream.clone(), send), |x| {
                         Message::DoNothing
                     });
                 }
@@ -298,22 +312,52 @@ impl App {
             }
             (Message::ConnectRightUser(stream, key), ScreenDisplay::Home) => {
                 self.online = true;
-                self.stream = Some(stream.clone());
+                let stream = match Arc::try_unwrap(stream) {
+                    Ok(x) => x,
+                    Err(_) => return Task::done(Message::SwitchStartScreen),
+                };
+                let (reader, writer) = stream.into_inner().into_split();
+                self.read_stream = Some(Arc::new(Mutex::new(reader)));
+                self.write_stream = Some(Arc::new(Mutex::new(writer)));
                 info!("DH was succesful");
+                let read_stream = match &self.read_stream {
+                    Some(x) => x,
+                    None => return Task::done(Message::SwitchStartScreen),
+                };
                 return Task::sip(
-                    check_if_other_user_only(stream),
+                    check_if_other_user_only(read_stream.clone()),
                     |message| message,
-                    |x| Message::DisconnectOtherUser,
+                    |x| {
+                        dbg!(x);
+                        Message::DoNothing
+                    },
                 );
             }
             (Message::DisconnectOtherUser, ScreenDisplay::Home) => {
                 self.online = false;
-                self.stream = None;
+                self.read_stream = None;
+                self.write_stream = None;
                 info!("Connection Disconnected");
                 if let Some(user) = &self.clientservermodell
-                    && let Some(tcpstream) = &self.stream
+                    && let Some(reader_stream) = self.read_stream.take()
+                    && let Some(writer_stream) = self.write_stream.take()
                 {
-                    return Task::done(Message::CheckConnection(tcpstream.clone(), user.clone()));
+                    let reader_stream = match Arc::try_unwrap(reader_stream) {
+                        Ok(x) => x,
+                        Err(_) => return Task::done(Message::SwitchStartScreen),
+                    };
+                    let writer_stream = match Arc::try_unwrap(writer_stream) {
+                        Ok(x) => x,
+                        Err(_) => return Task::done(Message::SwitchStartScreen),
+                    };
+                    let read_stream = reader_stream.into_inner();
+                    let writer_stream = writer_stream.into_inner();
+                    let tcp_stream = match read_stream.reunite(writer_stream) {
+                        Ok(x) => x,
+                        Err(_) => return Task::done(Message::SwitchStartScreen),
+                    };
+                    let tcp_stream = Arc::new(Mutex::new(tcp_stream));
+                    return Task::done(Message::CheckConnection(tcp_stream, user.clone()));
                 }
             }
             (Message::GetSendMessage(message), ScreenDisplay::Home) => match message {
@@ -323,10 +367,12 @@ impl App {
                     old_mac_key,
                     new_open_key,
                 } => {
+                    info!("Messing incomming");
                     let nachricht =
                         Nachricht::new(String::from_utf8(content).unwrap(), Utc::now(), 1);
                     // Fix Later
                     self.list_scrollable.push(nachricht);
+                    info!("Nachricht was recieved");
                 }
                 MessageSend::Exit => return Task::none(),
             },
@@ -429,7 +475,7 @@ impl App {
             .format("%H:%M %d/%m/%Y ")
             .to_string();
         let x: Element<'_, Message> = column![
-            text(info.message_text.clone()).size(20),
+            text(info.message_text.clone()).size(20).center(),
             text(clock_number).size(10)
         ]
         .into();

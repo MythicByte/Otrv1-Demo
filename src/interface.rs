@@ -68,6 +68,7 @@ use tracing::{
 
 use crate::{
     connection::{
+        Iv,
         check_if_other_user_only,
         decrypt_data_for_transend,
         encrpyt_data_for_transend,
@@ -114,7 +115,8 @@ pub struct App {
     pub clientservermodell: Option<ServerClientModell>,
     pub list_scrollable: Vec<Nachricht>,
     symmetric_key: Option<[u8; 32]>,
-    old_mac: Option<[u8; 64]>,
+    pub old_mac: Option<[u8; 64]>,
+    pub number_aes: Iv,
 }
 #[derive(Debug, Clone)]
 pub struct Keys {
@@ -198,6 +200,7 @@ impl App {
             symmetric_key: None,
             old_mac: None,
             message_last_id: 0,
+            number_aes: 0,
         })
     }
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -261,14 +264,18 @@ impl App {
                     self.message = text_editor::Content::new();
                     // To the Async Function that sends the code
                     let local_time = Utc::now();
-                    let send_message =
-                        match encrpyt_data_for_transend(text.clone().into(), key, old_mac_key) {
-                            Ok(x) => x,
-                            Err(e) => {
-                                error!("Encryption Failed {}", e);
-                                return Task::none();
-                            }
-                        };
+                    let send_message = match encrpyt_data_for_transend(
+                        self,
+                        text.clone().into(),
+                        key,
+                        old_mac_key,
+                    ) {
+                        Ok(x) => x,
+                        Err(e) => {
+                            error!("Encryption Failed {}", e);
+                            return Task::none();
+                        }
+                    };
                     let nachricht = Nachricht::new(text, local_time, 0);
                     // We are witing to the db know ignore
                     // self.list_scrollable.push(nachricht.clone());
@@ -380,7 +387,12 @@ impl App {
                             Ok(x) => x,
                             Err(_) => return Task::none(),
                         };
-                        let clear_text = match decrypt_data_for_transend(content, key, mac) {
+                        let clear_text = match decrypt_data_for_transend(
+                            self.number_aes.clone(),
+                            content,
+                            key,
+                            mac,
+                        ) {
                             Ok(x) => x,
                             Err(e) => {
                                 error!("Decryption Error Ignore {}", e);

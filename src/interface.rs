@@ -54,6 +54,7 @@ use iced::{
 use sqlx::{
     Pool,
     Sqlite,
+    prelude::FromRow,
     sqlite::SqlitePoolOptions,
 };
 use tokio::{
@@ -65,6 +66,7 @@ use tokio::{
     sync::Mutex,
 };
 use tracing::{
+    Instrument,
     error,
     info,
 };
@@ -139,19 +141,21 @@ pub enum Message {
     POSTChangeTextField(text_editor::Action),
     PostMessageToPeer,
     CheckDBError(u8),
-    ScrollDisplay(Viewport),
-    PutListValues(Vec<db::Message>),
     DoNothing,
+    ReplaceListDbLoad(Vec<Nachricht>),
 }
 /// The different Screens
 pub enum ScreenDisplay {
     Start(Screen),
     Home,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Nachricht {
+    #[sqlx(rename = "text")]
     pub message_text: String,
+    #[sqlx(rename = "date")]
     pub date_of_message: DateTime<Utc>,
+    #[sqlx(rename = "partner")]
     pub person_from: u8,
 }
 impl Nachricht {
@@ -215,7 +219,17 @@ impl App {
                             Message::CheckConnection(Arc::new(Mutex::new(correct_tcpstream)), user)
                         }
                         Err(_) => Message::SwitchStartScreen,
-                    });
+                    })
+                    .chain(Task::perform(
+                        read_all_user(self.sqlite_pool.clone()),
+                        |x| {
+                            let x = match x {
+                                Ok(x) => x,
+                                Err(_) => return Message::DoNothing,
+                            };
+                            Message::ReplaceListDbLoad(x)
+                        },
+                    ));
                 } else {
                     return Task::done(Message::SwitchStartScreen);
                 }
@@ -279,7 +293,7 @@ impl App {
                     };
                     if let Some(stream) = &self.write_stream {
                         return Task::perform(post_message(stream.clone(), send), |x| {
-                            Message::DoNothing
+                            Message::MessageInsert(nachricht)
                         });
                         // .chain(Task::done(Message::Rekying(ServerClientModell::Client)));
                     }
@@ -289,15 +303,6 @@ impl App {
                 if value == 1 {
                     error!("Db writing Failed");
                 }
-            }
-            (Message::ScrollDisplay(viewport), ScreenDisplay::Home) => {
-                return Task::perform({ read_all_user(self.sqlite_pool.clone()) }, |x| {
-                    let x = match x {
-                        Ok(correct) => correct,
-                        Err(_) => Vec::new(),
-                    };
-                    Message::PutListValues(x)
-                });
             }
             (Message::SwitchStartScreen, ScreenDisplay::Home) => {
                 self.screen = ScreenDisplay::Start(Screen::new());
@@ -410,8 +415,9 @@ impl App {
                         info!("Messing incomming");
                         let nachricht = Nachricht::new(text, Utc::now(), 1);
                         // Fix Later
-                        self.list_scrollable.push(nachricht);
+                        self.list_scrollable.push(nachricht.clone());
                         info!("Nachricht was recieved");
+                        return Task::done(Message::MessageInsert(nachricht));
                     }
                 }
                 MessageSend::Dh(diffie_hellman_send) => {
@@ -467,6 +473,9 @@ impl App {
                 {
                     todo!()
                 }
+            }
+            (Message::ReplaceListDbLoad(list), _) => {
+                self.list_scrollable = list;
             }
             _ => return Task::none(),
         }
@@ -544,8 +553,7 @@ impl App {
         ))
         .direction(Direction::Vertical(
             Scrollbar::new().anchor(scrollable::Anchor::Start),
-        ))
-        .on_scroll(|x| Message::ScrollDisplay(x));
+        ));
         container(scroll)
             .height(Length::Fill)
             .width(Length::Fill)

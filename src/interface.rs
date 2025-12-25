@@ -13,7 +13,6 @@ use iced::{
         scrollable::{
             Direction,
             Scrollbar,
-            Viewport,
         },
     },
 };
@@ -21,10 +20,7 @@ use serde::{
     Deserialize,
     Serialize,
 };
-use std::{
-    str::FromStr,
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use anyhow::Context;
 use chrono::{
@@ -66,7 +62,6 @@ use tokio::{
     sync::Mutex,
 };
 use tracing::{
-    Instrument,
     error,
     info,
 };
@@ -79,8 +74,7 @@ use crate::{
         post_message,
     },
     db::{
-        self,
-        read_all_user,
+        read_nachricht_with_id_max,
         write_db,
     },
     interface,
@@ -107,6 +101,7 @@ pub struct App {
     pub connect_values: Option<ConnectValues>,
     /// Sqlx Sqlite connection
     sqlite_pool: Pool<Sqlite>,
+    message_last_id: u64,
     /// The Editor to send or edit messages
     message: text_editor::Content,
     /// Inline indicator
@@ -127,6 +122,8 @@ pub struct Keys {
 }
 #[derive(Debug, Clone)]
 pub enum Message {
+    AddScrollableList(Vec<Nachricht>),
+    ScrollCheckNewInput,
     PostRekying(DiffieHellmanSend),
     Rekying(ServerClientModell),
     GetSendMessage(MessageSend),
@@ -140,7 +137,6 @@ pub enum Message {
     Screen(screen::ScreenMessage),
     POSTChangeTextField(text_editor::Action),
     PostMessageToPeer,
-    CheckDBError(u8),
     DoNothing,
     ReplaceListDbLoad(Vec<Nachricht>),
 }
@@ -175,12 +171,10 @@ impl App {
     }
     fn new_result() -> anyhow::Result<Self> {
         let rt = Runtime::new().context("The tokio Runtime Failed")?;
-        let sqlite = sqlx::sqlite::SqliteConnectOptions::from_str("sqlite:otr_demeo.db")?
-            .create_if_missing(true);
         let pool = rt.block_on(async {
             let pool = SqlitePoolOptions::new()
                 .max_connections(4)
-                .connect_with(sqlite)
+                .connect("sqlite::memory:")
                 .await
                 .expect("Sqlite Pool failed");
             sqlx::migrate!("./migrations")
@@ -203,6 +197,7 @@ impl App {
             write_stream: None,
             symmetric_key: None,
             old_mac: None,
+            message_last_id: 0,
         })
     }
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -219,37 +214,27 @@ impl App {
                             Message::CheckConnection(Arc::new(Mutex::new(correct_tcpstream)), user)
                         }
                         Err(_) => Message::SwitchStartScreen,
-                    })
-                    .chain(Task::perform(
-                        read_all_user(self.sqlite_pool.clone()),
-                        |x| {
-                            let x = match x {
-                                Ok(x) => x,
-                                Err(_) => return Message::DoNothing,
-                            };
-                            Message::ReplaceListDbLoad(x)
-                        },
-                    ));
+                    });
                 } else {
                     return Task::done(Message::SwitchStartScreen);
                 }
             }
             (Message::MessageInsert(nachricht), ScreenDisplay::Home) => {
-                return Task::perform(
-                    write_db(
-                        self.sqlite_pool.clone(),
-                        nachricht.message_text,
-                        nachricht.date_of_message,
-                        nachricht.person_from,
-                    ),
-                    |x| {
-                        let x = match x {
-                            Ok(_) => 0,
-                            Err(_) => 1,
-                        };
-                        Message::CheckDBError(x)
-                    },
-                );
+                // For db overhole disabled
+                //
+                return Task::perform(write_db(self.sqlite_pool.clone(), nachricht), |x| {
+                    let x = match x {
+                        Ok(x) => {
+                            // info!("Db was written Input to");
+                            Message::ScrollCheckNewInput
+                        }
+                        Err(e) => {
+                            error!("Erro with the Db writing :{}", e);
+                            Message::DoNothing
+                        }
+                    };
+                    x
+                });
             }
             (Message::Screen(screen_message), ScreenDisplay::Start(screen)) => {
                 if let ScreenMessage::SwitchToMainScreen = screen_message {
@@ -285,7 +270,8 @@ impl App {
                             }
                         };
                     let nachricht = Nachricht::new(text, local_time, 0);
-                    self.list_scrollable.push(nachricht.clone());
+                    // We are witing to the db know ignore
+                    // self.list_scrollable.push(nachricht.clone());
                     info!("nachricht wurde verschickt");
                     let send = match postcard::to_allocvec(&send_message) {
                         Ok(x) => x,
@@ -297,11 +283,6 @@ impl App {
                         });
                         // .chain(Task::done(Message::Rekying(ServerClientModell::Client)));
                     }
-                }
-            }
-            (Message::CheckDBError(value), _) => {
-                if value == 1 {
-                    error!("Db writing Failed");
                 }
             }
             (Message::SwitchStartScreen, ScreenDisplay::Home) => {
@@ -394,6 +375,7 @@ impl App {
                     new_open_key,
                 } => {
                     if let Some(key) = self.symmetric_key {
+                        info!("Message got in");
                         let mac = match mac.try_into() {
                             Ok(x) => x,
                             Err(_) => return Task::none(),
@@ -415,7 +397,7 @@ impl App {
                         info!("Messing incomming");
                         let nachricht = Nachricht::new(text, Utc::now(), 1);
                         // Fix Later
-                        self.list_scrollable.push(nachricht.clone());
+                        // self.list_scrollable.push(nachricht.clone());
                         info!("Nachricht was recieved");
                         return Task::done(Message::MessageInsert(nachricht));
                     }
@@ -476,6 +458,25 @@ impl App {
             }
             (Message::ReplaceListDbLoad(list), _) => {
                 self.list_scrollable = list;
+            }
+            (Message::ScrollCheckNewInput, ScreenDisplay::Home) => {
+                return Task::perform(
+                    read_nachricht_with_id_max(
+                        self.sqlite_pool.clone(),
+                        self.message_last_id.clone() as i64,
+                    ),
+                    |x| match x {
+                        Ok(x) => Message::AddScrollableList(x),
+                        Err(e) => {
+                            error!("Adding content do Scroll failed: {}", e);
+                            Message::DoNothing
+                        }
+                    },
+                );
+            }
+            (Message::AddScrollableList(add), ScreenDisplay::Home) => {
+                self.list_scrollable.extend(add);
+                self.message_last_id = self.list_scrollable.len() as u64;
             }
             _ => return Task::none(),
         }
@@ -553,7 +554,9 @@ impl App {
         ))
         .direction(Direction::Vertical(
             Scrollbar::new().anchor(scrollable::Anchor::Start),
-        ));
+        ))
+        .auto_scroll(true)
+        .on_scroll(|_viewport| Message::ScrollCheckNewInput);
         container(scroll)
             .height(Length::Fill)
             .width(Length::Fill)

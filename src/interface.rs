@@ -72,6 +72,8 @@ use tracing::{
 use crate::{
     connection::{
         check_if_other_user_only,
+        decrypt_data_for_transend,
+        encrpyt_data_for_transend,
         post_message,
     },
     db::{
@@ -81,9 +83,12 @@ use crate::{
     },
     interface,
     net::{
+        DiffieHellmanSend,
         MessageSend,
         ServerClientModell,
-        diffie_hellman_check,
+        dh_not_signed_write_only,
+        diffie_hellman_check_singed,
+        rekying_diffie_hellman_not_signed_reading_first,
         setup_connection,
     },
     screen::{
@@ -111,6 +116,8 @@ pub struct App {
     /// Whoch Server Model is
     pub clientservermodell: Option<ServerClientModell>,
     pub list_scrollable: Vec<Nachricht>,
+    symmetric_key: Option<[u8; 32]>,
+    old_mac: Option<[u8; 64]>,
 }
 #[derive(Debug, Clone)]
 pub struct Keys {
@@ -118,10 +125,12 @@ pub struct Keys {
 }
 #[derive(Debug, Clone)]
 pub enum Message {
+    PostRekying(DiffieHellmanSend),
+    Rekying(ServerClientModell),
     GetSendMessage(MessageSend),
     /// Disconnect to the other user
     DisconnectOtherUser,
-    ConnectRightUser(Arc<Mutex<tokio::net::TcpStream>>, Vec<u8>),
+    ConnectRightUser(Arc<Mutex<tokio::net::TcpStream>>, [u8; 32]),
     SwitchStartScreen,
     CheckConnection(Arc<Mutex<tokio::net::TcpStream>>, ServerClientModell),
     SwitchToMainScreen,
@@ -188,6 +197,8 @@ impl App {
             list_scrollable: Vec::new(),
             read_stream: None,
             write_stream: None,
+            symmetric_key: None,
+            old_mac: None,
         })
     }
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -241,28 +252,37 @@ impl App {
                 if self.message.is_empty() || self.online == false {
                     return Task::none();
                 }
-                let text = self.message.text();
-                // Refreshed the text edit
-                self.message = text_editor::Content::new();
-                // To the Async Function that sends the code
-                let local_time = Utc::now();
-                let send_message = MessageSend::Encrypted {
-                    content: text.as_bytes().to_vec(),
-                    mac: Vec::new(),
-                    old_mac_key: Vec::new(),
-                    new_open_key: Vec::new(),
-                };
-                let nachricht = Nachricht::new(text, local_time, 0);
-                self.list_scrollable.push(nachricht.clone());
-                info!("nachricht wurde verschickt");
-                let send = match postcard::to_allocvec(&send_message) {
-                    Ok(x) => x,
-                    Err(_) => return Task::done(Message::SwitchStartScreen),
-                };
-                if let Some(stream) = &self.write_stream {
-                    return Task::perform(post_message(stream.clone(), send), |x| {
-                        Message::DoNothing
-                    });
+                if let Some(key) = self.symmetric_key {
+                    let old_mac_key = match self.old_mac {
+                        Some(x) => x,
+                        None => [0; 64],
+                    };
+                    let text = self.message.text();
+                    // Refreshed the text edit
+                    self.message = text_editor::Content::new();
+                    // To the Async Function that sends the code
+                    let local_time = Utc::now();
+                    let send_message =
+                        match encrpyt_data_for_transend(text.clone().into(), key, old_mac_key) {
+                            Ok(x) => x,
+                            Err(e) => {
+                                error!("Encryption Failed {}", e);
+                                return Task::none();
+                            }
+                        };
+                    let nachricht = Nachricht::new(text, local_time, 0);
+                    self.list_scrollable.push(nachricht.clone());
+                    info!("nachricht wurde verschickt");
+                    let send = match postcard::to_allocvec(&send_message) {
+                        Ok(x) => x,
+                        Err(_) => return Task::done(Message::SwitchStartScreen),
+                    };
+                    if let Some(stream) = &self.write_stream {
+                        return Task::perform(post_message(stream.clone(), send), |x| {
+                            Message::DoNothing
+                        });
+                        // .chain(Task::done(Message::Rekying(ServerClientModell::Client)));
+                    }
                 }
             }
             (Message::CheckDBError(value), _) => {
@@ -291,7 +311,7 @@ impl App {
                         Err(_) => return Task::done(Message::SwitchStartScreen),
                     };
                     return Task::perform(
-                        diffie_hellman_check(
+                        diffie_hellman_check_singed(
                             stream,
                             user,
                             connected_values.cert.pkey.clone(),
@@ -316,6 +336,7 @@ impl App {
                     Ok(x) => x,
                     Err(_) => return Task::done(Message::SwitchStartScreen),
                 };
+                self.symmetric_key = Some(key);
                 let (reader, writer) = stream.into_inner().into_split();
                 self.read_stream = Some(Arc::new(Mutex::new(reader)));
                 self.write_stream = Some(Arc::new(Mutex::new(writer)));
@@ -329,7 +350,7 @@ impl App {
                     |message| message,
                     |x| {
                         dbg!(x);
-                        Message::DoNothing
+                        Message::DisconnectOtherUser
                     },
                 );
             }
@@ -367,15 +388,86 @@ impl App {
                     old_mac_key,
                     new_open_key,
                 } => {
-                    info!("Messing incomming");
-                    let nachricht =
-                        Nachricht::new(String::from_utf8(content).unwrap(), Utc::now(), 1);
-                    // Fix Later
-                    self.list_scrollable.push(nachricht);
-                    info!("Nachricht was recieved");
+                    if let Some(key) = self.symmetric_key {
+                        let mac = match mac.try_into() {
+                            Ok(x) => x,
+                            Err(_) => return Task::none(),
+                        };
+                        let clear_text = match decrypt_data_for_transend(content, key, mac) {
+                            Ok(x) => x,
+                            Err(e) => {
+                                error!("Decryption Error Ignore {}", e);
+                                return Task::none();
+                            }
+                        };
+                        let text = match String::from_utf8(clear_text) {
+                            Ok(x) => x,
+                            Err(_) => {
+                                error!("Deserialie String to Utf8 failed gets ignored");
+                                return Task::none();
+                            }
+                        };
+                        info!("Messing incomming");
+                        let nachricht = Nachricht::new(text, Utc::now(), 1);
+                        // Fix Later
+                        self.list_scrollable.push(nachricht);
+                        info!("Nachricht was recieved");
+                    }
                 }
-                MessageSend::Exit => return Task::none(),
+                MessageSend::Dh(diffie_hellman_send) => {
+                    if let Some(reader) = self.read_stream.clone()
+                        && let Some(writer) = self.write_stream.clone()
+                    {
+                        info!("Dh from other Person recieved");
+                        return Task::perform(
+                            dh_not_signed_write_only(reader, writer, diffie_hellman_send),
+                            |x| {
+                                info!("{:?}", x);
+                                match x {
+                                    Ok(_) => Message::DoNothing,
+                                    Err(error) => {
+                                        error!("Error with rekying has happend: {}", error);
+                                        Message::DisconnectOtherUser
+                                    }
+                                }
+                            },
+                        );
+                    }
+                }
             },
+            (Message::Rekying(_), ScreenDisplay::Home) => {
+                if let Some(reader) = self.read_stream.clone()
+                    && let Some(writer) = self.write_stream.clone()
+                {
+                    // info!("Rekying started");
+                    return Task::perform(
+                        rekying_diffie_hellman_not_signed_reading_first(reader, writer),
+                        |x| {
+                            info!("{:?}", x);
+                            match x {
+                                Ok(_) => {
+                                    info!("Rekying worked with not problems");
+                                    Message::DoNothing
+                                }
+                                Err(e) => {
+                                    info!("A error with the rekying has happend: {}", e);
+                                    Message::DisconnectOtherUser
+                                }
+                            }
+                        },
+                    );
+                } else {
+                    error!("Error with the Rekying has happend");
+                    return Task::done(Message::DisconnectOtherUser);
+                }
+            }
+            (Message::PostRekying(diffie), ScreenDisplay::Home) => {
+                if let Some(reader) = self.read_stream.clone()
+                    && let Some(writer) = self.write_stream.clone()
+                {
+                    todo!()
+                }
+            }
             _ => return Task::none(),
         }
         Task::none()

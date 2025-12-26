@@ -43,47 +43,68 @@ use openssl::{
 use rfd::AsyncFileDialog;
 use tracing::info;
 
+/// Start Screen Gui Store
 pub struct Screen {
+    /// The config values for later
     pub builderconnectvalues: BuilderConnectValues,
+    /// Check button right
     pub button: (bool, bool, bool, bool),
 }
+/// The Messages for the start Screen
 #[derive(Debug, Clone)]
 pub enum ScreenMessage {
+    /// Test if can be switched to home screen
     SwitchToMainScreen,
+    /// Gives FilePath
     PostFilePath(FilePathWithEnum),
+    /// Open File Dialog with options
     OpenFileDiaglog {
+        /// title for the file dialog
         title: String,
-        filter: Option<String>,
+        /// Which extension
+        filter: Option<Vec<String>>,
+        /// Thane name for the filter
+        filter_name: String,
+        /// Which action
         fileactiondialog: FileDialogAction,
     },
+    /// Gives back the ip
     PostIp(String),
+    /// Gives back the password
     PostPassword(String),
 }
+/// File Dialog Options
 #[derive(Debug, Clone)]
 pub enum FileDialogAction {
+    /// Pcks12 cert
     PkCS12,
+    /// x509 cert
     X509,
 }
 impl Screen {
+    /// Create new Screen
     pub fn new() -> Self {
         Self {
             builderconnectvalues: BuilderConnectValues::new(),
             button: (false, false, false, false),
         }
     }
+    /// Updates the Screen struct and heavy lifting for the gui
     pub fn update(&mut self, screenmessage: ScreenMessage) -> Task<ScreenMessage> {
         match screenmessage {
             ScreenMessage::OpenFileDiaglog {
                 title,
                 filter,
                 fileactiondialog,
+                filter_name,
             } => {
                 return Task::perform(
                     async {
                         let file_dialog = AsyncFileDialog::new().set_title(title);
                         let file_dialog = match filter {
-                            Some(filter_checked) => file_dialog
-                                .add_filter(filter_checked.clone(), filter_checked.as_bytes()),
+                            Some(filter_checked) => {
+                                file_dialog.add_filter(filter_name, &filter_checked)
+                            }
                             None => file_dialog,
                         };
                         let file_dialog = file_dialog.pick_file();
@@ -119,7 +140,7 @@ impl Screen {
                                     file_data.len().try_into().unwrap_or_else(|_| usize::MAX),
                                 );
                                 // Can be adde Later
-                                let buff_reader =
+                                let _buff_reader =
                                     BufReader::new(file_open).read_to_end(&mut buffer_file);
                                 // Check Result can be ignored or checked
                                 // Something for Later
@@ -147,12 +168,12 @@ impl Screen {
                                     file_data.len().try_into().unwrap_or_else(|_| usize::MAX),
                                 );
                                 // Can be adde Later
-                                let buff_reader =
+                                let _buff_reader =
                                     BufReader::new(file_open).read_to_end(&mut buffer_capacity);
                                 // Check Result can be ignored or checked
                                 // Something for Later
                                 // Not needed because in the build function it is checked
-                                let check = builder.set_x509(&buffer_capacity);
+                                let _check = builder.set_x509(&buffer_capacity);
                             }
                         }
                     }
@@ -167,12 +188,14 @@ impl Screen {
         }
         Task::none()
     }
+    /// The gui elements for the start screen
     pub fn view(&self) -> Element<'_, ScreenMessage> {
         let button_file_other_user: Element<'_, ScreenMessage> = button(text("Cert X509").center())
             .on_press(ScreenMessage::OpenFileDiaglog {
                 title: "Check Other User Cert X509".to_string(),
-                filter: None,
+                filter: Some(["pem".to_string(), "der".to_string()].to_vec()),
                 fileactiondialog: FileDialogAction::X509,
+                filter_name: "X509".to_string(),
             })
             .style(|theme: &Theme, status| {
                 let palette = theme.extended_palette();
@@ -210,8 +233,9 @@ impl Screen {
         let button_client_pkcs12: Element<'_, ScreenMessage> = button(text("Cert PKCS12"))
             .on_press(ScreenMessage::OpenFileDiaglog {
                 title: "Choose Our own PKCS12 Cert".to_string(),
-                filter: None,
+                filter: Some(["p12".to_string()].to_vec()),
                 fileactiondialog: FileDialogAction::PkCS12,
+                filter_name: "Pkcs12".to_string(),
             })
             .style(|theme: &Theme, status| {
                 let palette = theme.extended_palette();
@@ -239,7 +263,7 @@ impl Screen {
             })
             .into();
         let input_password_pkcs12: Element<'_, ScreenMessage> =
-            text_input("Password", &self.builderconnectvalues.get_password_stern())
+            text_input("Password", &self.builderconnectvalues.get_password())
                 .on_input(ScreenMessage::PostPassword)
                 .width(Length::Fixed(100.0))
                 .secure(true)
@@ -320,13 +344,19 @@ impl Screen {
     }
 }
 
+/// The values that are given to the main screen
 pub struct ConnectValues {
+    /// Pcks12 Cert
     pub cert: ParsedPkcs12_2,
-    pub ip: SocketAddr,
-    pub x509: X509,
+    /// The password for the pcks12 cert
     pub pkcs_password: String,
+    /// Ip address
+    pub ip: SocketAddr,
+    /// X509 Cert
+    pub x509: X509,
 }
 impl ConnectValues {
+    /// Default constructor
     pub fn new(cert: ParsedPkcs12_2, ip: SocketAddr, x509: X509, pkcs_password: String) -> Self {
         Self {
             cert,
@@ -336,6 +366,7 @@ impl ConnectValues {
         }
     }
 }
+/// The builder for [ConnectValues]
 pub struct BuilderConnectValues {
     cert: Option<Pkcs12>,
     pkcs_passwod: String,
@@ -343,6 +374,7 @@ pub struct BuilderConnectValues {
     x509: Option<X509>,
 }
 impl BuilderConnectValues {
+    /// Builder Constructor
     pub fn new() -> Self {
         Self {
             cert: None,
@@ -351,22 +383,28 @@ impl BuilderConnectValues {
             pkcs_passwod: "".to_string(),
         }
     }
+    /// Set the pkcs12
     pub fn set_cert_pkcs12(&mut self, input_cert_der: &[u8]) -> anyhow::Result<()> {
         self.cert = Some(Pkcs12::from_der(input_cert_der).context("Parsing from Pkcs12 Failed")?);
         Ok(())
     }
+    /// Seter for ip
     pub fn set_ip(&mut self, input_ip: String) {
         self.ip = Some(input_ip);
     }
+    /// Seter for password
     pub fn set_password(&mut self, input_password: String) {
         self.pkcs_passwod = input_password;
     }
-    pub fn get_password_stern(&self) -> String {
+    /// Getter for the password
+    pub fn get_password(&self) -> String {
         self.pkcs_passwod.clone()
     }
+    /// Getter for the pkcs
     pub fn get_pkcs_correct(&self) -> bool {
         self.cert.is_some()
     }
+    /// Checks if the builder is correct
     pub fn build(&mut self) -> anyhow::Result<ConnectValues> {
         return match (
             self.cert.take(),
@@ -388,6 +426,7 @@ impl BuilderConnectValues {
             }
         };
     }
+    /// Setter for the X509 Cert
     pub fn set_x509(&mut self, input: &[u8]) -> anyhow::Result<()> {
         let x509_parsed = X509::from_pem(input)
             .or_else(|_| X509::from_der(input))
@@ -395,6 +434,7 @@ impl BuilderConnectValues {
         self.x509 = Some(x509_parsed);
         Ok(())
     }
+    /// Getter for the ip
     pub fn get_ip(&self) -> String {
         let value = self.ip.clone();
         if let Some(value) = value {
@@ -403,12 +443,16 @@ impl BuilderConnectValues {
         "".to_string()
     }
 }
+/// File Path
 #[derive(Debug, Clone)]
 pub struct FilePathWithEnum {
+    /// Which file path
     pub path: Option<PathBuf>,
+    /// Which action
     pub filedialogacion: FileDialogAction,
 }
 impl FilePathWithEnum {
+    /// Creates mew FilePathWithEnum
     pub fn new(path: Option<PathBuf>, filedialogacion: FileDialogAction) -> Self {
         Self {
             path,

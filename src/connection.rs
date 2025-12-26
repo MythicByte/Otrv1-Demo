@@ -46,6 +46,8 @@ use crate::{
     net::MessageSend,
 };
 /// Recieves Messages from the other client
+///
+/// Needs for getting the messages and then get a response from the application
 pub fn check_if_other_user_only(
     stream: Arc<Mutex<OwnedReadHalf>>,
 ) -> impl Straw<(), Message, anyhow::Error> {
@@ -75,7 +77,7 @@ pub fn check_if_other_user_only(
                     info!("Diffie Hellman Recieved");
                     output.send(Message::PostRekying(diffie_hellman_send)).await;
                 }
-                MessageSend::Dh_Back(diffie_hellman_send) => {
+                MessageSend::DhBack(diffie_hellman_send) => {
                     output
                         .send(Message::IncomingDhBack(diffie_hellman_send))
                         .await;
@@ -85,6 +87,8 @@ pub fn check_if_other_user_only(
     })
 }
 /// Send message to the other user
+///
+/// Easy wrapper to write &[u8] to the other cliet
 pub async fn post_message(
     stream: Arc<Mutex<OwnedWriteHalf>>,
     content: Vec<u8>,
@@ -97,6 +101,9 @@ pub async fn post_message(
     info!("Message send tcpstream");
     Ok(())
 }
+/// Ecnrypts the [Nachricht] for transport
+///
+///Encrypts with AES 256 CTR and a hmac tag SHA 3 512
 pub fn encrpyt_data_for_transend(
     app: &mut App,
     message: Vec<u8>,
@@ -111,8 +118,7 @@ pub fn encrpyt_data_for_transend(
     let send_message = MessageSend::Encrypted {
         content: ciphertext,
         mac: hmac_key,
-        old_mac_key: old_mac.try_into().context("Try into failed")?,
-        new_open_key: Vec::new(),
+        old_mac_key: old_mac.into(),
     };
     let old_mac_add: [u8; 64] = match hmac_signer_final_key.try_into() {
         Ok(x) => x,
@@ -122,6 +128,7 @@ pub fn encrpyt_data_for_transend(
     app.iv.add_one();
     Ok(send_message)
 }
+/// Decrypt the [Nachricht] from transport and checks if the tag is true
 pub fn decrypt_data_for_transend(
     app: &mut App,
     message: Vec<u8>,
@@ -147,6 +154,9 @@ pub fn decrypt_data_for_transend(
     app.iv.add_one();
     Ok(cleartext)
 }
+/// Easy help Wrapper for a hmac with SHA3 512
+///
+/// Meeded because oppenssl rust has no bindings to it
 fn hmac(key: [u8; 32], message: Vec<u8>) -> Result<(Vec<u8>, Vec<u8>), ErrorStack> {
     const IPAD: u8 = 0x36;
     const OPAD: u8 = 0x5c;
@@ -163,9 +173,11 @@ fn hmac(key: [u8; 32], message: Vec<u8>) -> Result<(Vec<u8>, Vec<u8>), ErrorStac
     let hmac_final = PKey::hmac(&hmac_key)?.raw_private_key()?;
     Ok((hmac_final, hmac_final_key))
 }
+/// The Iv for the AES CTR
 #[derive(Debug, Clone, Default)]
 pub struct Iv([u8; 16]);
 impl Iv {
+    /// Adding one up for encryption
     pub fn add_one(&mut self) {
         for (index, value) in self.0.iter_mut().enumerate() {
             let result = value.checked_add(1);
@@ -184,6 +196,9 @@ impl Iv {
             };
         }
     }
+    /// If Rekying should be done
+    ///
+    /// Or wait ten minutes from the subscriber
     pub fn check_rekying_should_be_done(&self) -> bool {
         if self.0[8] == 255 {
             return true;

@@ -104,6 +104,7 @@ use crate::{
         ScreenMessage,
     },
 };
+/// The main struct for the gui and application
 pub struct App {
     /// Which Dispay is used
     pub screen: ScreenDisplay,
@@ -111,63 +112,93 @@ pub struct App {
     pub connect_values: Option<ConnectValues>,
     /// Sqlx Sqlite connection
     sqlite_pool: Pool<Sqlite>,
+    /// For fetching the latest message
     message_last_id: u64,
     /// The Editor to send or edit messages
     message: text_editor::Content,
-    /// Inline indicator
+    /// If the other user is online
     online: bool,
-    /// TCPStream to the right target
-    // stream: Option<Arc<Mutex<tokio::net::TcpStream>>>,
+    /// The tokio right stream for a tcpstream
     read_stream: Option<Arc<Mutex<OwnedReadHalf>>>,
+    /// The tokio write stream for a tcpstream
     write_stream: Option<Arc<Mutex<OwnedWriteHalf>>>,
-    /// Whoch Server Model is
+    /// Who is Server and who is Client
     pub clientservermodell: Option<ServerClientModell>,
+    /// The content that is diplayed
     pub list_scrollable: Vec<Nachricht>,
+    /// The key for AES CTR 256 for encryption
     symmetric_key: Option<[u8; 32]>,
+    /// The old mac key to include in the next message
     pub old_mac: Option<[u8; 64]>,
+    /// Hte iv for AES encryption
     pub iv: Iv,
+    /// The DH key for Rekying
     pub diffie_hellman_key: Option<Dh<Private>>,
 }
-#[derive(Debug, Clone)]
-pub struct Keys {
-    open: Vec<u8>,
-}
+/// The Signals for Iced Runtime
+///
+/// Specifiy all action taken from the iced gui libary
 #[derive(Debug, Clone)]
 pub enum Message {
+    /// DH Respone from the other client
     IncomingDhBack(DiffieHellmanSend),
+    /// Scrollable List add to display
     AddScrollableList(Vec<Nachricht>),
+    /// Check if new input for the scroll wheel is there
     ScrollCheckNewInput,
+    /// Send Rekying message
     PostRekying(DiffieHellmanSend),
+    /// Initialize Rekying
     Rekying,
+    /// Recives a [MessageSend] and responde to it
     GetSendMessage(MessageSend),
     /// Disconnect to the other user
     DisconnectOtherUser,
+    /// Checks if the right user connected with DH
     ConnectRightUser(Arc<Mutex<tokio::net::TcpStream>>, [u8; 32]),
+    /// Switch to start Screen
     SwitchStartScreen,
-    CheckConnection(Arc<Mutex<tokio::net::TcpStream>>, ServerClientModell),
+    /// Switch to Main Screen
     SwitchToMainScreen,
+    /// Check Connection to connect to
+    CheckConnection(Arc<Mutex<tokio::net::TcpStream>>, ServerClientModell),
+    /// Insert a new Message in the Sqlite and the content displayed
     MessageInsert(Nachricht),
+    /// Placeholder for the Screen Struct and function
     Screen(screen::ScreenMessage),
+    /// Text Field Editor change
     POSTChangeTextField(text_editor::Action),
+    /// Send the Message in the text field to the other user
     PostMessageToPeer,
+    /// Ignore do nothing
     DoNothing,
-    ReplaceListDbLoad(Vec<Nachricht>),
 }
 /// The different Screens
 pub enum ScreenDisplay {
+    /// The start screen and store for the struct
     Start(Screen),
+    /// Home Screen
     Home,
 }
+/// How Content is Displayed and stored in the db
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Nachricht {
+    /// The Message
     #[sqlx(rename = "text")]
     pub message_text: String,
+    /// Time of the Message
     #[sqlx(rename = "date")]
     pub date_of_message: DateTime<Utc>,
+    /// Who has send the message
+    ///
+    /// 0 for myself
+    ///
+    /// 1 for the other person
     #[sqlx(rename = "partner")]
     pub person_from: u8,
 }
 impl Nachricht {
+    /// Construct Nachricht
     pub fn new(message_text: String, date_of_message: DateTime<Utc>, person_from: u8) -> Self {
         Self {
             message_text,
@@ -177,11 +208,13 @@ impl Nachricht {
     }
 }
 impl App {
+    /// Construct App
     pub fn new() -> Self {
         let output = Self::new_result().expect("Setting up failed");
         info!("Sqlite and Basic Setup was correct");
         output
     }
+    /// Creates the initial gui, which can return a error
     fn new_result() -> anyhow::Result<Self> {
         let rt = Runtime::new().context("The tokio Runtime Failed")?;
         let pool = rt.block_on(async {
@@ -215,13 +248,14 @@ impl App {
             diffie_hellman_key: None,
         })
     }
+    /// The Loop that updates Variabels and do the have leafting
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match (message, &mut self.screen) {
             (Message::SwitchToMainScreen, ScreenDisplay::Start(screen)) => {
                 let build = &mut screen.builderconnectvalues;
                 let conversation_pkcs12 = build.build();
                 if let Ok(conversation) = conversation_pkcs12 {
-                    let ip_clone_for_later = conversation.ip.clone();
+                    let ip_clone_for_later = conversation.ip;
                     self.connect_values = Some(conversation);
                     self.screen = ScreenDisplay::Home;
                     return Task::perform(setup_connection(ip_clone_for_later), |x| match x {
@@ -238,8 +272,8 @@ impl App {
                 // For db overhole disabled
                 //
                 return Task::perform(write_db(self.sqlite_pool.clone(), nachricht), |x| {
-                    let x = match x {
-                        Ok(x) => {
+                    match x {
+                        Ok(_) => {
                             // info!("Db was written Input to");
                             Message::ScrollCheckNewInput
                         }
@@ -247,8 +281,7 @@ impl App {
                             error!("Erro with the Db writing :{}", e);
                             Message::DoNothing
                         }
-                    };
-                    x
+                    }
                 });
             }
             (Message::Screen(screen_message), ScreenDisplay::Start(screen)) => {
@@ -263,14 +296,11 @@ impl App {
             }
             (Message::PostMessageToPeer, ScreenDisplay::Home) => {
                 // Only for testing disable
-                if self.message.is_empty() || self.online == false {
+                if self.message.is_empty() || !self.online {
                     return Task::none();
                 }
                 if let Some(key) = self.symmetric_key {
-                    let old_mac_key = match self.old_mac {
-                        Some(x) => x,
-                        None => [0; 64],
-                    };
+                    let old_mac_key = self.old_mac.unwrap_or([0; 64]);
                     let text = self.message.text();
                     // Refreshed the text edit
                     self.message = text_editor::Content::new();
@@ -302,7 +332,7 @@ impl App {
                         Err(_) => return Task::done(Message::SwitchStartScreen),
                     };
                     if let Some(stream) = &self.write_stream {
-                        return Task::perform(post_message(stream.clone(), send), |x| {
+                        return Task::perform(post_message(stream.clone(), send), |_| {
                             Message::MessageInsert(nachricht)
                         });
                         // .chain(Task::done(Message::Rekying(ServerClientModell::Client)));
@@ -358,7 +388,7 @@ impl App {
                 return Task::sip(
                     check_if_other_user_only(read_stream.clone()),
                     |message| message,
-                    |x| {
+                    |_| {
                         // dbg!(x);
                         Message::DisconnectOtherUser
                     },
@@ -368,9 +398,10 @@ impl App {
                 self.online = false;
                 self.read_stream = None;
                 self.write_stream = None;
+                self.iv = Iv::default();
                 info!("Connection Disconnected");
                 if let Some(conversation) = &self.connect_values {
-                    return Task::perform(setup_connection(conversation.ip.clone()), |x| match x {
+                    return Task::perform(setup_connection(conversation.ip), |x| match x {
                         Ok((correct_tcpstream, user)) => {
                             Message::CheckConnection(Arc::new(Mutex::new(correct_tcpstream)), user)
                         }
@@ -381,12 +412,7 @@ impl App {
                 }
             }
             (Message::GetSendMessage(message), ScreenDisplay::Home) => match message {
-                MessageSend::Encrypted {
-                    content,
-                    mac,
-                    old_mac_key,
-                    new_open_key,
-                } => {
+                MessageSend::Encrypted { content, mac, .. } => {
                     if let Some(key) = self.symmetric_key {
                         info!("Message got in");
                         let mac = match mac.try_into() {
@@ -416,25 +442,10 @@ impl App {
                     }
                 }
                 // Checks what's heppening when A Dh is comming in
-                MessageSend::Dh(diffie_hellman_send) => {
-                    if let Some(reader) = self.symmetric_key
-                        && let Some(dh) = &mut self.diffie_hellman_key
-                        && let Some(writer) = self.write_stream.clone()
-                    {
-                        info!("Dh from other Person recieved");
-                        // let (key, message_to_other_user) = reading_keying(dh, message);
-                        // return Task::perform(future, f);
-                    }
-                }
-                // Check Later
-                MessageSend::Dh_Back(diffie_hellman_send) => {
-                    todo!()
-                }
+                _ => return Task::none(),
             },
             (Message::Rekying, ScreenDisplay::Home) => {
-                if let Some(reader) = self.read_stream.clone()
-                    && let Some(writer) = self.write_stream.clone()
-                {
+                if let Some(writer) = self.write_stream.clone() {
                     info!("Rekying started");
                     let dh = match generate_db_to_send() {
                         Ok(x) => x,
@@ -458,7 +469,7 @@ impl App {
                 }
             }
             (Message::PostRekying(diffie), ScreenDisplay::Home) => {
-                if let None = self.diffie_hellman_key {
+                if self.diffie_hellman_key.is_none() {
                     match generate_db_to_send() {
                         Ok(x) => {
                             info!("Keys are rotated");
@@ -474,7 +485,7 @@ impl App {
                     && let Some(diffie_hellman_key) = &mut self.diffie_hellman_key
                 {
                     info!("rekying incoming");
-                    let (key) = match reading_keying(diffie_hellman_key, &diffie) {
+                    let key = match reading_keying(diffie_hellman_key, &diffie) {
                         Ok(x) => x,
                         Err(e) => {
                             error!("Error with1: {}", e);
@@ -493,7 +504,7 @@ impl App {
                             return Task::none();
                         }
                     };
-                    let to_serialize_output = MessageSend::Dh_Back(send_back);
+                    let to_serialize_output = MessageSend::DhBack(send_back);
                     let message = match postcard::to_allocvec(&to_serialize_output) {
                         Ok(x) => x,
                         Err(_) => {
@@ -510,14 +521,11 @@ impl App {
                     });
                 }
             }
-            (Message::ReplaceListDbLoad(list), _) => {
-                self.list_scrollable = list;
-            }
             (Message::ScrollCheckNewInput, ScreenDisplay::Home) => {
                 return Task::perform(
                     read_nachricht_with_id_max(
                         self.sqlite_pool.clone(),
-                        self.message_last_id.clone() as i64,
+                        self.message_last_id as i64,
                     ),
                     |x| match x {
                         Ok(x) => Message::AddScrollableList(x),
@@ -549,12 +557,16 @@ impl App {
         }
         Task::none()
     }
+    /// Gives the gui elements back
+    ///
+    /// Give for each Screen the correct element back
     pub fn view(&self) -> iced::Element<'_, Message> {
         return match &self.screen {
             ScreenDisplay::Start(screen) => screen.view().map(Message::Screen),
-            ScreenDisplay::Home => Self::home(&self),
+            ScreenDisplay::Home => Self::home(self),
         };
     }
+    /// For the home Screen the gui elements
     fn home(&self) -> iced::Element<'_, Message> {
         let title = text("Otrv1 Messaging").size(40).center();
         let title = container(title).center_x(Length::Fill);
@@ -576,6 +588,9 @@ impl App {
             .align_x(Horizontal::Center)
             .into()
     }
+    /// The status bar displayed on the top
+    ///
+    /// activate button for testing
     fn status_bar(&self) -> Element<'_, Message> {
         let ip_to_text = text(format!(
             "IP: {}",
@@ -622,6 +637,7 @@ impl App {
         .align_y(Vertical::Center);
         container(status_row).width(Length::FillPortion(2)).into()
     }
+    /// The Chat Content that is scrollable
     fn chat(&self) -> Element<'_, Message> {
         let scroll = scrollable(column(
             self.list_scrollable
@@ -638,6 +654,7 @@ impl App {
             .width(Length::Fill)
             .into()
     }
+    /// Gives the [Message] to send the content in the text editor field
     fn send_message(&self) -> Element<'_, Message> {
         let text_editor = text_editor(&self.message)
             .placeholder("Message ..")
@@ -647,7 +664,8 @@ impl App {
         let row = row![text_editor, Space::new().width(10), button_submit_message];
         container(row).into()
     }
-    fn message_scrollable(&self, info: &interface::Nachricht) -> Element<'_, Message> {
+    /// A helper function for creating a message Element, which interprets [Nachricht] to a display thing
+    fn message_scrollable<'a>(&self, info: &'a interface::Nachricht) -> Element<'a, Message> {
         let clock_number = info
             .date_of_message
             .with_timezone(&Local)
@@ -661,10 +679,17 @@ impl App {
         let x: Element<'_, Message> = container(x)
             .style(|theme: &Theme| {
                 let palette = theme.extended_palette();
-                container::Style {
-                    text_color: palette.success.strong.color.into(),
-                    background: Some(palette.background.base.color.into()),
-                    ..container::Style::default()
+                match info.person_from {
+                    0 => container::Style {
+                        text_color: palette.success.strong.color.into(),
+                        background: Some(palette.background.base.color.into()),
+                        ..container::Style::default()
+                    },
+                    _ => container::Style {
+                        text_color: palette.primary.strong.color.into(),
+                        background: Some(palette.background.base.color.into()),
+                        ..container::Style::default()
+                    },
                 }
             })
             .into();
@@ -673,6 +698,7 @@ impl App {
             _ => row![Space::new().width(Length::Fill), x].into(),
         };
     }
+    /// That every ten minutes a DH Rekying  is happening
     pub fn subscribtion(&self) -> Subscription<Message> {
         iced::time::every(Duration::from_mins(10)).map(|_| Message::Rekying)
     }

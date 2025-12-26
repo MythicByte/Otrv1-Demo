@@ -2,10 +2,6 @@ use anyhow::{
     Context,
     anyhow,
 };
-use iced::{
-    Event,
-    Subscription,
-};
 use sqlx::{
     Pool,
     Sqlite,
@@ -13,6 +9,9 @@ use sqlx::{
 
 use crate::interface::Nachricht;
 
+/// Writes a text query into the sqlite db
+///
+/// Needed for new Message to store
 pub async fn write_db(sql_pool: Pool<Sqlite>, content: Nachricht) -> anyhow::Result<()> {
     sqlx::query("INSERT INTO message(text,date,partner) VALUES (?,?,?)")
         .bind(content.message_text)
@@ -23,22 +22,9 @@ pub async fn write_db(sql_pool: Pool<Sqlite>, content: Nachricht) -> anyhow::Res
         .map(|_| ())
         .map_err(|_| anyhow!("Sqlite Problem"))
 }
-/// Checks the length of the message table
-pub async fn user_length(sql_pool: Pool<Sqlite>) -> anyhow::Result<u64> {
-    let output: u64 = sqlx::query_scalar("SELECT COUNT(*) FROM message")
-        .fetch_one(&sql_pool)
-        .await
-        .context("Db check Error")?;
-    Ok(output)
-}
-/// Read all user from the sqlite db
-pub async fn read_all_user(sql_pool: Pool<Sqlite>) -> anyhow::Result<Vec<Nachricht>> {
-    let user = sqlx::query_as::<_, Nachricht>("SELECT * FROM message")
-        .fetch_all(&sql_pool)
-        .await
-        .context("Db reading of all user failed")?;
-    Ok(user)
-}
+/// read the [Nachricht] with the id set as minimum
+///
+/// Needed for loading the Scrollable content to be displayed
 pub async fn read_nachricht_with_id_max(
     sql_pool: Pool<Sqlite>,
     id: i64,
@@ -79,18 +65,6 @@ mod tests {
         assert!(result.is_ok());
     }
     #[tokio::test]
-    async fn test_db_length() {
-        let pool = sql_pool().await;
-        let nachricht = Nachricht::new("Alice".to_string(), Utc::now(), 0);
-        let _result_write = write_db(pool.clone(), nachricht).await.unwrap();
-        let result_read = read_all_user(pool.clone()).await;
-        // dbg!(&result);
-        assert!(result_read.is_ok());
-        let result_length = user_length(pool).await;
-        assert!(result_length.is_ok());
-        assert_eq!(result_length.unwrap(), 1);
-    }
-    #[tokio::test]
     async fn test_db_id() {
         let pool = sql_pool().await;
         let nachricht = Nachricht::new("Alice".to_string(), Utc::now(), 0);
@@ -114,5 +88,13 @@ mod tests {
             pool
         };
         pool
+    }
+    /// Read all user from the sqlite db
+    async fn read_all_user(sql_pool: Pool<Sqlite>) -> anyhow::Result<Vec<Nachricht>> {
+        let user = sqlx::query_as::<_, Nachricht>("SELECT * FROM message")
+            .fetch_all(&sql_pool)
+            .await
+            .context("Db reading of all user failed")?;
+        Ok(user)
     }
 }

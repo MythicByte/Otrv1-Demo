@@ -39,20 +39,32 @@ use tokio::{
 use tracing::info;
 
 /// The Messages that are send over the wire
+///
+/// Which is Serialized/Deserialized with the postcard libary
+///
+/// Bincode was not used, because the project is abended
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub enum MessageSend {
+    /// A Message Encrypted
     Encrypted {
+        /// The Message itself encryptet
         content: Vec<u8>,
+        /// A Hmac SHA 3 512
         mac: Vec<u8>,
+        /// Old Hmac
         old_mac_key: Vec<u8>,
-        new_open_key: Vec<u8>,
     },
+    /// DH Offering for the other Client
     Dh(DiffieHellmanSend),
-    Dh_Back(DiffieHellmanSend),
+    /// The Respone to DH
+    DhBack(DiffieHellmanSend),
 }
+/// How a Dh ist transfered over wire
 #[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct DiffieHellmanSend {
+    /// DH open key
     pub open_key: Vec<u8>,
+    /// For the signed Hmac
     pub signed: Vec<u8>,
 }
 /// If we have here a Server or Client
@@ -60,38 +72,57 @@ pub struct DiffieHellmanSend {
 /// Depends for Reconnecting and other work
 #[derive(Debug, Clone)]
 pub enum ServerClientModell {
+    /// Is server
     Server,
+    /// Is client
     Client,
 }
 /// Defines Erros for the Diffie Hellman connection
+///
+/// # Todo
+/// Combine some Error variants and remove the not needed anymore
 #[derive(Debug, Error)]
 pub enum ErrorDiffieHellman {
+    /// Generation Error
     #[error("Diffie Hellman Generation failed")]
     DHGeneration,
+    /// Key Generation Error
     #[error("Diffie Hellman Key Generation with parameters failed")]
     DHKeyGeneration,
+    /// Check if sign key was there
     #[error("The Signing Key was not there")]
     SigningKeyNotThere,
+    /// Sign failed
     #[error("The Creation for the DH Signer failed")]
     SignerCreationFailed,
+    /// Final sign failed
     #[error("Failing of DH failed")]
     FinalSignFailed,
+    /// Serialization failed
     #[error("Serializiton failed")]
     SerializationFailed,
+    /// Sending payload failed
     #[error("Sending of a message failed")]
     SendingPayloadFailed,
+    /// Conversion Error
     #[error("Conversation Failed")]
     U64ToUsizeFailed,
+    /// Wrong format
     #[error("Format from Client was wrong")]
     AnswerFormatWrong,
     #[error("Error with Verifier")]
+    /// Verify has given an error
     VerfifierError,
     #[error("The signatur is wrong")]
+    /// EH signed Wrong
     ErrorDHSignedWrong,
+    /// Tokio Problem
     #[error("Reading or Writing from/to Stream error")]
     ReadOrWritingProblem(#[from] std::io::Error),
+    /// Openssl has given an Error
     #[error("Openssl hat thrown a error")]
     OpenSSL(#[from] openssl::error::ErrorStack),
+    /// Konversation Error
     #[error("Error with the vec to array")]
     AesKeyToArray,
 }
@@ -244,8 +275,13 @@ pub fn generate_db_to_send() -> Result<(Dh<Private>, DiffieHellmanSend), ErrorDi
     client_diffie_hellman.open_key = diffie_hellman_key.public_key().to_vec();
     Ok((diffie_hellman_key, client_diffie_hellman))
 }
+/// Reades Dh key
+///
+/// gives back the new shared secret
 pub fn reading_keying(
+    // DH key pair
     key: &mut Dh<Private>,
+    // The other public key
     message: &DiffieHellmanSend,
 ) -> Result<[u8; 32], ErrorDiffieHellman> {
     let number = BigNum::from_slice(&message.open_key)?;
@@ -259,6 +295,7 @@ pub fn reading_keying(
         .map_err(|_| ErrorDiffieHellman::AesKeyToArray)?;
     Ok(aes_key_256)
 }
+/// Gives the pub key from DH back
 pub fn give_pub_key_back(key: &mut Dh<Private>) -> anyhow::Result<DiffieHellmanSend> {
     let pub_key = key.public_key().to_vec();
     let mut output = DiffieHellmanSend::default();

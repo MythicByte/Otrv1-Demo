@@ -17,6 +17,10 @@ use iced::{
         },
     },
 };
+use openssl::{
+    dh::Dh,
+    pkey::Private,
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -87,9 +91,8 @@ use crate::{
         DiffieHellmanSend,
         MessageSend,
         ServerClientModell,
-        dh_not_signed_write_only,
         diffie_hellman_check_singed,
-        rekying_diffie_hellman_not_signed_reading_first,
+        generate_db_to_send,
         setup_connection,
     },
     screen::{
@@ -121,6 +124,7 @@ pub struct App {
     symmetric_key: Option<[u8; 32]>,
     pub old_mac: Option<[u8; 64]>,
     pub iv: Iv,
+    pub diffie_hellman_key: Option<Dh<Private>>,
 }
 #[derive(Debug, Clone)]
 pub struct Keys {
@@ -130,6 +134,7 @@ pub struct Keys {
 pub enum Message {
     AddScrollableList(Vec<Nachricht>),
     ScrollCheckNewInput,
+    InitialRekying(DiffieHellmanSend),
     PostRekying(DiffieHellmanSend),
     Rekying,
     GetSendMessage(MessageSend),
@@ -205,6 +210,7 @@ impl App {
             old_mac: None,
             message_last_id: 0,
             iv: Iv::default(),
+            diffie_hellman_key: None,
         })
     }
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -351,7 +357,7 @@ impl App {
                     check_if_other_user_only(read_stream.clone()),
                     |message| message,
                     |x| {
-                        dbg!(x);
+                        // dbg!(x);
                         Message::DisconnectOtherUser
                     },
                 );
@@ -418,8 +424,10 @@ impl App {
                         return Task::done(Message::MessageInsert(nachricht));
                     }
                 }
+                // Checks what's heppening when A Dh is comming in
                 MessageSend::Dh(diffie_hellman_send) => {
-                    if let Some(reader) = self.read_stream.clone()
+                    if let Some(reader) = self.symmetric_key
+                        && let Some(dh) = self.diffie_hellman_key
                         && let Some(writer) = self.write_stream.clone()
                     {
                         info!("Dh from other Person recieved");
@@ -438,38 +446,50 @@ impl App {
                         );
                     }
                 }
+                // Check Later
+                MessageSend::Dh_Back(diffie_hellman_send) => {
+                    todo!()
+                }
             },
             (Message::Rekying, ScreenDisplay::Home) => {
                 if let Some(reader) = self.read_stream.clone()
                     && let Some(writer) = self.write_stream.clone()
                 {
-                    // info!("Rekying started");
-                    return Task::perform(
-                        rekying_diffie_hellman_not_signed_reading_first(reader, writer),
-                        |x| {
-                            info!("{:?}", x);
-                            match x {
-                                Ok(_) => {
-                                    info!("Rekying worked with not problems");
-                                    Message::DoNothing
-                                }
-                                Err(e) => {
-                                    info!("A error with the rekying has happend: {}", e);
-                                    Message::DisconnectOtherUser
-                                }
-                            }
-                        },
-                    );
+                    info!("Rekying started");
+                    let dh = match generate_db_to_send() {
+                        Ok(x) => x,
+                        Err(_) => return Task::none(),
+                    };
+                    self.diffie_hellman_key = Some(dh.0);
+                    let send_bytes = match postcard::to_allocvec(&MessageSend::Dh(dh.1)) {
+                        Ok(x) => x,
+                        Err(_) => return Task::none(),
+                    };
+                    return Task::perform(post_message(writer.clone(), send_bytes), |x| match x {
+                        Ok(_) => Message::DoNothing,
+                        Err(_) => {
+                            error!("error with sending");
+                            Message::SwitchToMainScreen
+                        }
+                    });
                 } else {
                     error!("Error with the Rekying has happend");
                     return Task::done(Message::DisconnectOtherUser);
                 }
             }
             (Message::PostRekying(diffie), ScreenDisplay::Home) => {
-                if let Some(reader) = self.read_stream.clone()
-                    && let Some(writer) = self.write_stream.clone()
-                {
-                    todo!()
+                if let Some(writer) = self.write_stream.clone() {
+                    info!("rekying incoming");
+                    let message = match postcard::to_allocvec(&diffie) {
+                        Ok(x) => x,
+                        Err(_) => return Task::none(),
+                    };
+                    return Task::perform(post_message(writer, message), |x| {
+                        if let Err(e) = x {
+                            error!("Error with Rekying: {}", e);
+                        }
+                        Message::DoNothing
+                    });
                 }
             }
             (Message::ReplaceListDbLoad(list), _) => {
@@ -535,6 +555,8 @@ impl App {
             }
         ))
         .center();
+        // Comment later out, only for testing
+        let reky_button = button("One Reky").on_press(Message::Rekying);
         let online_indicator: Element<'_, Message> = container("")
             .style(|_: &Theme| {
                 let color = if self.online {
@@ -554,6 +576,7 @@ impl App {
             .into();
         let status_row = row![
             ip_to_text,
+            reky_button,
             horizontal().width(Length::Fill),
             online_indicator,
             Space::new().width(5),

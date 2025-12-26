@@ -52,6 +52,7 @@ pub enum MessageSend {
         new_open_key: Vec<u8>,
     },
     Dh(DiffieHellmanSend),
+    Dh_Back(DiffieHellmanSend),
 }
 #[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct DiffieHellmanSend {
@@ -221,122 +222,123 @@ pub async fn diffie_hellman_check_singed(
         }
     }
 }
-/// The Dh for Rekying
-pub async fn rekying_diffie_hellman_not_signed_reading_first(
-    // the stream
-    read_stream: Arc<Mutex<OwnedReadHalf>>,
-    write_stream: Arc<Mutex<OwnedWriteHalf>>,
-) -> Result<[u8; 32], ErrorDiffieHellman> {
-    let (mut read_stream, mut write_stream) = (read_stream.lock().await, write_stream.lock().await);
-    let diffie_hellman = Dh::get_2048_256().map_err(|_| ErrorDiffieHellman::DHGeneration)?;
-    let diffie_hellman_key = diffie_hellman
-        .generate_key()
-        .map_err(|_| ErrorDiffieHellman::DHKeyGeneration)?;
-    // Old Code shot be removed
-    // match sender {
-    //     ServerClientModell::Client => {
-    //         let mut client_diffie_hellman: DiffieHellmanSend = DiffieHellmanSend::default();
-    //         client_diffie_hellman.open_key = diffie_hellman_key.public_key().to_vec();
-    //         let send = postcard::to_allocvec(&client_diffie_hellman)
-    //             .map_err(|_| ErrorDiffieHellman::SerializationFailed)?;
-    //         let length_send = send
-    //             .len()
-    //             .try_into()
-    //             .map_err(|_| ErrorDiffieHellman::U64ToUsizeFailed)?;
-    //         write_stream.write_u64(length_send).await?;
-    //         write_stream.write_all(&send).await?;
-    //         let length_recievied = read_stream.read_u64().await?;
+// /// The Dh for Rekying
+// pub async fn rekying_diffie_hellman_not_signed_reading_first(
+//     // the stream
+//     read_stream: Arc<Mutex<OwnedReadHalf>>,
+//     write_stream: Arc<Mutex<OwnedWriteHalf>>,
+// ) -> Result<[u8; 32], ErrorDiffieHellman> {
+//     let (mut read_stream, mut write_stream) = (read_stream.lock().await, write_stream.lock().await);
+//     let diffie_hellman = Dh::get_2048_256().map_err(|_| ErrorDiffieHellman::DHGeneration)?;
+//     let diffie_hellman_key = diffie_hellman
+//         .generate_key()
+//         .map_err(|_| ErrorDiffieHellman::DHKeyGeneration)?;
+//     // Old Code shot be removed
+//     // match sender {
+//     //     ServerClientModell::Client => {
+//     //         let mut client_diffie_hellman: DiffieHellmanSend = DiffieHellmanSend::default();
+//     //         client_diffie_hellman.open_key = diffie_hellman_key.public_key().to_vec();
+//     //         let send = postcard::to_allocvec(&client_diffie_hellman)
+//     //             .map_err(|_| ErrorDiffieHellman::SerializationFailed)?;
+//     //         let length_send = send
+//     //             .len()
+//     //             .try_into()
+//     //             .map_err(|_| ErrorDiffieHellman::U64ToUsizeFailed)?;
+//     //         write_stream.write_u64(length_send).await?;
+//     //         write_stream.write_all(&send).await?;
+//     //         let length_recievied = read_stream.read_u64().await?;
 
-    //         let mut result: Vec<u8> = Vec::with_capacity(
-    //             length_recievied
-    //                 .try_into()
-    //                 .map_err(|_| ErrorDiffieHellman::U64ToUsizeFailed)?,
-    //         );
-    //         read_stream.read_exact(&mut result).await?;
-    //         let number = BigNum::from_slice(&result)?;
-    //         let final_dffie_hellman = diffie_hellman_key.compute_key(&number)?;
-    //         let mut final_symmetrik_key = Hasher::new(MessageDigest::sha3_256())?;
-    //         final_symmetrik_key.update(&final_dffie_hellman)?;
-    //         let aes_key_256: [u8; 32] = final_symmetrik_key
-    //             .finish()?
-    //             .to_vec()
-    //             .try_into()
-    //             .map_err(|_| ErrorDiffieHellman::AesKeyToArray)?;
-    //         // Add to the key to the db
-    //         Ok(aes_key_256)
-    //     }
-    //     ServerClientModell::Server => {
+//     //         let mut result: Vec<u8> = Vec::with_capacity(
+//     //             length_recievied
+//     //                 .try_into()
+//     //                 .map_err(|_| ErrorDiffieHellman::U64ToUsizeFailed)?,
+//     //         );
+//     //         read_stream.read_exact(&mut result).await?;
+//     //         let number = BigNum::from_slice(&result)?;
+//     //         let final_dffie_hellman = diffie_hellman_key.compute_key(&number)?;
+//     //         let mut final_symmetrik_key = Hasher::new(MessageDigest::sha3_256())?;
+//     //         final_symmetrik_key.update(&final_dffie_hellman)?;
+//     //         let aes_key_256: [u8; 32] = final_symmetrik_key
+//     //             .finish()?
+//     //             .to_vec()
+//     //             .try_into()
+//     //             .map_err(|_| ErrorDiffieHellman::AesKeyToArray)?;
+//     //         // Add to the key to the db
+//     //         Ok(aes_key_256)
+//     //     }
+//     //     ServerClientModell::Server => {
 
-    info!("Dh Reconnecting started");
-    let mut client_diffie_hellman: DiffieHellmanSend = DiffieHellmanSend::default();
-    client_diffie_hellman.open_key = diffie_hellman_key.public_key().to_vec();
-    let send = postcard::to_allocvec(&client_diffie_hellman)
-        .map_err(|_| ErrorDiffieHellman::SerializationFailed)?;
-    let length_send = send
-        .len()
-        .try_into()
-        .map_err(|_| ErrorDiffieHellman::U64ToUsizeFailed)?;
-    write_stream.write_u64(length_send).await?;
-    write_stream.write_all(&send).await?;
-    let len_recieved = read_stream.read_u64().await?;
-    let mut result: Vec<u8> = Vec::with_capacity(
-        len_recieved
-            .try_into()
-            .map_err(|_| ErrorDiffieHellman::U64ToUsizeFailed)?,
-    );
-    read_stream.read_exact(&mut result).await?;
-    let number = BigNum::from_slice(&result)?;
-    let final_dffie_hellman = diffie_hellman_key.compute_key(&number)?;
-    let mut final_symmetrik_key = Hasher::new(MessageDigest::sha3_256())?;
-    final_symmetrik_key.update(&final_dffie_hellman)?;
-    let aes_key_256: [u8; 32] = final_symmetrik_key
-        .finish()?
-        .to_vec()
-        .try_into()
-        .map_err(|_| ErrorDiffieHellman::AesKeyToArray)?;
-    // Add to the key to the db
-    Ok(aes_key_256)
-    // }
-    // }
-}
-pub async fn dh_not_signed_write_only(
-    read_stream: Arc<Mutex<OwnedReadHalf>>,
-    write_stream: Arc<Mutex<OwnedWriteHalf>>,
-    diffie_other_person: DiffieHellmanSend,
-) -> Result<[u8; 32], ErrorDiffieHellman> {
-    info!("Dh Reconnecting started");
-    let (mut read_stream, mut write_stream) = (read_stream.lock().await, write_stream.lock().await);
-    let diffie_hellman = Dh::get_2048_256().map_err(|_| ErrorDiffieHellman::DHGeneration)?;
-    let mut client_diffie_hellman: DiffieHellmanSend = DiffieHellmanSend::default();
-    let diffie_hellman_key = diffie_hellman
-        .generate_key()
-        .map_err(|_| ErrorDiffieHellman::DHKeyGeneration)?;
+//     info!("Dh Reconnecting started");
+//     let mut client_diffie_hellman: DiffieHellmanSend = DiffieHellmanSend::default();
+//     client_diffie_hellman.open_key = diffie_hellman_key.public_key().to_vec();
+//     let send = postcard::to_allocvec(&client_diffie_hellman)
+//         .map_err(|_| ErrorDiffieHellman::SerializationFailed)?;
+//     let length_send = send
+//         .len()
+//         .try_into()
+//         .map_err(|_| ErrorDiffieHellman::U64ToUsizeFailed)?;
+//     write_stream.write_u64(length_send).await?;
+//     write_stream.write_all(&send).await?;
+//     let len_recieved = read_stream.read_u64().await?;
+//     let mut result: Vec<u8> = Vec::with_capacity(
+//         len_recieved
+//             .try_into()
+//             .map_err(|_| ErrorDiffieHellman::U64ToUsizeFailed)?,
+//     );
+//     read_stream.read_exact(&mut result).await?;
+//     let number = BigNum::from_slice(&result)?;
+//     let final_dffie_hellman = diffie_hellman_key.compute_key(&number)?;
+//     let mut final_symmetrik_key = Hasher::new(MessageDigest::sha3_256())?;
+//     final_symmetrik_key.update(&final_dffie_hellman)?;
+//     let aes_key_256: [u8; 32] = final_symmetrik_key
+//         .finish()?
+//         .to_vec()
+//         .try_into()
+//         .map_err(|_| ErrorDiffieHellman::AesKeyToArray)?;
+//     // Add to the key to the db
+//     Ok(aes_key_256)
+//     // }
+//     // }
+// }
+// pub async fn dh_not_signed_write_only(
+//     read_stream: Arc<Mutex<OwnedReadHalf>>,
+//     write_stream: Arc<Mutex<OwnedWriteHalf>>,
+//     diffie_other_person: DiffieHellmanSend,
+// ) -> Result<[u8; 32], ErrorDiffieHellman> {
+//     info!("Dh Reconnecting started");
+//     let (mut read_stream, mut write_stream) = (read_stream.lock().await, write_stream.lock().await);
+//     let diffie_hellman = Dh::get_2048_256().map_err(|_| ErrorDiffieHellman::DHGeneration)?;
+//     let mut client_diffie_hellman: DiffieHellmanSend = DiffieHellmanSend::default();
+//     let diffie_hellman_key = diffie_hellman
+//         .generate_key()
+//         .map_err(|_| ErrorDiffieHellman::DHKeyGeneration)?;
 
-    client_diffie_hellman.open_key = diffie_hellman_key.public_key().to_vec();
-    let send = postcard::to_allocvec(&client_diffie_hellman)
-        .map_err(|_| ErrorDiffieHellman::SerializationFailed)?;
-    let length_send = send
-        .len()
-        .try_into()
-        .map_err(|_| ErrorDiffieHellman::U64ToUsizeFailed)?;
-    write_stream.write_u64(length_send).await?;
-    write_stream.write_all(&send).await?;
-    let mut client_diffie_hellman: DiffieHellmanSend = DiffieHellmanSend::default();
-    client_diffie_hellman.open_key = diffie_hellman_key.public_key().to_vec();
-    let send = postcard::to_allocvec(&client_diffie_hellman)
-        .map_err(|_| ErrorDiffieHellman::SerializationFailed)?;
-    let number = BigNum::from_slice(&diffie_other_person.open_key)?;
-    let final_dffie_hellman = diffie_hellman_key.compute_key(&number)?;
-    let mut final_symmetrik_key = Hasher::new(MessageDigest::sha3_256())?;
-    final_symmetrik_key.update(&final_dffie_hellman)?;
-    let aes_key_256: [u8; 32] = final_symmetrik_key
-        .finish()?
-        .to_vec()
-        .try_into()
-        .map_err(|_| ErrorDiffieHellman::AesKeyToArray)?;
-    // Add to the key to the db
-    Ok(aes_key_256)
-}
+//     client_diffie_hellman.open_key = diffie_hellman_key.public_key().to_vec();
+//     let send = postcard::to_allocvec(&client_diffie_hellman)
+//         .map_err(|_| ErrorDiffieHellman::SerializationFailed)?;
+//     let length_send = send
+//         .len()
+//         .try_into()
+//         .map_err(|_| ErrorDiffieHellman::U64ToUsizeFailed)?;
+//     write_stream.write_u64(length_send).await?;
+//     write_stream.write_all(&send).await?;
+//     let mut client_diffie_hellman: DiffieHellmanSend = DiffieHellmanSend::default();
+//     client_diffie_hellman.open_key = diffie_hellman_key.public_key().to_vec();
+//     let send = postcard::to_allocvec(&client_diffie_hellman)
+//         .map_err(|_| ErrorDiffieHellman::SerializationFailed)?;
+//     let number = BigNum::from_slice(&diffie_other_person.open_key)?;
+//     let final_dffie_hellman = diffie_hellman_key.compute_key(&number)?;
+//     let mut final_symmetrik_key = Hasher::new(MessageDigest::sha3_256())?;
+//     final_symmetrik_key.update(&final_dffie_hellman)?;
+//     let aes_key_256: [u8; 32] = final_symmetrik_key
+//         .finish()?
+//         .to_vec()
+//         .try_into()
+//         .map_err(|_| ErrorDiffieHellman::AesKeyToArray)?;
+//     // Add to the key to the db
+//     Ok(aes_key_256)
+// }
+
 /// Works with Async code to wait what is free and connect to it
 pub async fn setup_connection(ip: SocketAddr) -> anyhow::Result<(TcpStream, ServerClientModell)> {
     tokio::select! {
@@ -351,4 +353,22 @@ pub async fn setup_connection(ip: SocketAddr) -> anyhow::Result<(TcpStream, Serv
         return Ok((reached_out_finished, ServerClientModell::Client));
     }
     }
+}
+/// Write the Dh in the Thing for Rekying without signing
+pub fn generate_db_to_send() -> Result<(Dh<Private>, DiffieHellmanSend), ErrorDiffieHellman> {
+    let diffie_hellman = Dh::get_2048_256().map_err(|_| ErrorDiffieHellman::DHGeneration)?;
+    let diffie_hellman_key = diffie_hellman
+        .generate_key()
+        .map_err(|_| ErrorDiffieHellman::DHKeyGeneration)?;
+    let mut client_diffie_hellman: DiffieHellmanSend = DiffieHellmanSend::default();
+    client_diffie_hellman.open_key = diffie_hellman_key.public_key().to_vec();
+    Ok((diffie_hellman_key, client_diffie_hellman))
+}
+pub async fn reading_keying(
+    key: &mut Dh<Private>,
+    message: &DiffieHellmanSend,
+) -> Result<Vec<u8>, ErrorDiffieHellman> {
+    let number = BigNum::from_slice(&message.open_key)?;
+    let shared_secret = key.compute_key(&number)?;
+    Ok(shared_secret)
 }

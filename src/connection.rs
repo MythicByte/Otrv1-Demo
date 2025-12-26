@@ -14,10 +14,7 @@ use iced::{
 use openssl::{
     error::ErrorStack,
     hash::MessageDigest,
-    pkey::{
-        PKey,
-        Private,
-    },
+    pkey::PKey,
     sign::Signer,
     symm::{
         Cipher,
@@ -75,8 +72,10 @@ pub fn check_if_other_user_only(
                     output.send(Message::GetSendMessage(content_correct)).await;
                 }
                 MessageSend::Dh(diffie_hellman_send) => {
+                    info!("Diffie Hellman Recieved");
                     output.send(Message::PostRekying(diffie_hellman_send)).await;
                 }
+                MessageSend::Dh_Back(_diffie_hellman_send) => error!("Rekying sending Error"),
             }
         }
     })
@@ -104,7 +103,7 @@ pub fn encrpyt_data_for_transend(
     let ciphertext =
         encrypt(aes_256_ctr, &key, Some(&app.iv.0), &message).context("Encrpytion Failed")?;
     let (hmac_key, hmac_signer_final_key) = hmac(key, message.clone())?;
-    dbg!(&hmac_key);
+    // dbg!(&hmac_key);
     let send_message = MessageSend::Encrypted {
         content: ciphertext,
         mac: hmac_key,
@@ -138,7 +137,7 @@ pub fn decrypt_data_for_transend(
     };
     if result != mac {
         error!("Mac Tag failed");
-        dbg!(&result, &cleartext);
+        // dbg!(&result, &cleartext);
         return Err(anyhow!("Mac Authentication Failed"));
     }
     app.iv.add_one();

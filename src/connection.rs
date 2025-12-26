@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use anyhow::{
     Context,
     anyhow,
@@ -22,6 +20,7 @@ use openssl::{
         encrypt,
     },
 };
+use std::sync::Arc;
 use tokio::{
     io::{
         AsyncReadExt,
@@ -101,7 +100,7 @@ pub async fn post_message(
     info!("Message send tcpstream");
     Ok(())
 }
-/// Ecnrypts the [Nachricht] for transport
+/// Ecnrypts the [Nachricht](crate::interface::Nachricht) for transport
 ///
 ///Encrypts with AES 256 CTR and a hmac tag SHA 3 512
 pub fn encrpyt_data_for_transend(
@@ -128,7 +127,7 @@ pub fn encrpyt_data_for_transend(
     app.iv.add_one();
     Ok(send_message)
 }
-/// Decrypt the [Nachricht] from transport and checks if the tag is true
+/// Decrypt the [Nachricht](crate::interface::Nachricht) from transport and checks if the tag is true
 pub fn decrypt_data_for_transend(
     app: &mut App,
     message: Vec<u8>,

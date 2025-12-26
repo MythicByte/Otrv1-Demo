@@ -369,26 +369,15 @@ impl App {
                 self.read_stream = None;
                 self.write_stream = None;
                 info!("Connection Disconnected");
-                if let Some(user) = &self.clientservermodell
-                    && let Some(reader_stream) = self.read_stream.take()
-                    && let Some(writer_stream) = self.write_stream.take()
-                {
-                    let reader_stream = match Arc::try_unwrap(reader_stream) {
-                        Ok(x) => x,
-                        Err(_) => return Task::done(Message::SwitchStartScreen),
-                    };
-                    let writer_stream = match Arc::try_unwrap(writer_stream) {
-                        Ok(x) => x,
-                        Err(_) => return Task::done(Message::SwitchStartScreen),
-                    };
-                    let read_stream = reader_stream.into_inner();
-                    let writer_stream = writer_stream.into_inner();
-                    let tcp_stream = match read_stream.reunite(writer_stream) {
-                        Ok(x) => x,
-                        Err(_) => return Task::done(Message::SwitchStartScreen),
-                    };
-                    let tcp_stream = Arc::new(Mutex::new(tcp_stream));
-                    return Task::done(Message::CheckConnection(tcp_stream, user.clone()));
+                if let Some(conversation) = &self.connect_values {
+                    return Task::perform(setup_connection(conversation.ip.clone()), |x| match x {
+                        Ok((correct_tcpstream, user)) => {
+                            Message::CheckConnection(Arc::new(Mutex::new(correct_tcpstream)), user)
+                        }
+                        Err(_) => Message::SwitchStartScreen,
+                    });
+                } else {
+                    return Task::done(Message::SwitchStartScreen);
                 }
             }
             (Message::GetSendMessage(message), ScreenDisplay::Home) => match message {

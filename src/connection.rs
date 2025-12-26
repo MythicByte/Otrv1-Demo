@@ -126,7 +126,7 @@ pub fn encrpyt_data_for_transend(
     };
     app.old_mac = Some(old_mac_add);
     dbg!(&send_message);
-    app.number_aes += 1;
+    app.iv.add_one();
     Ok(send_message)
 }
 pub fn decrypt_data_for_transend(
@@ -172,10 +172,36 @@ fn hmac(key: [u8; 32], message: Vec<u8>) -> Result<(PKey<Private>, Vec<u8>), Err
 }
 #[derive(Debug, Clone, Default)]
 pub struct Iv([u8; 16]);
-impl AddAssign for Iv {
-    fn add_assign(&mut self, rhs: Self) {
-        for mut i in self.0.into_iter() {
-            i = i.wrapping_add(1);
+impl Iv {
+    pub fn add_one(&mut self) {
+        for (index, value) in self.0.iter_mut().enumerate() {
+            let result = value.checked_add(1);
+            match result {
+                Some(x) => {
+                    *value = x;
+                    break;
+                }
+                None => match index {
+                    15 => {
+                        self.0 = [0; 16];
+                        break;
+                    }
+                    _ => continue,
+                },
+            };
         }
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn check_add_iv() {
+        let mut iv = Iv::default();
+        for _ in 0..=4080 {
+            iv.add_one();
+        }
+        assert_eq!(iv.0, [0; 16]);
+        // dbg!(iv.0);
     }
 }

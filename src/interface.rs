@@ -116,7 +116,7 @@ pub struct App {
     pub list_scrollable: Vec<Nachricht>,
     symmetric_key: Option<[u8; 32]>,
     pub old_mac: Option<[u8; 64]>,
-    pub number_aes: Iv,
+    pub iv: Iv,
 }
 #[derive(Debug, Clone)]
 pub struct Keys {
@@ -200,7 +200,7 @@ impl App {
             symmetric_key: None,
             old_mac: None,
             message_last_id: 0,
-            number_aes: 0,
+            iv: Iv::default(),
         })
     }
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -387,18 +387,14 @@ impl App {
                             Ok(x) => x,
                             Err(_) => return Task::none(),
                         };
-                        let clear_text = match decrypt_data_for_transend(
-                            self.number_aes.clone(),
-                            content,
-                            key,
-                            mac,
-                        ) {
-                            Ok(x) => x,
-                            Err(e) => {
-                                error!("Decryption Error Ignore {}", e);
-                                return Task::none();
-                            }
-                        };
+                        let clear_text =
+                            match decrypt_data_for_transend(self.iv.clone(), content, key, mac) {
+                                Ok(x) => x,
+                                Err(e) => {
+                                    error!("Decryption Error Ignore {}", e);
+                                    return Task::none();
+                                }
+                            };
                         let text = match String::from_utf8(clear_text) {
                             Ok(x) => x,
                             Err(_) => {

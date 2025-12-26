@@ -75,7 +75,11 @@ pub fn check_if_other_user_only(
                     info!("Diffie Hellman Recieved");
                     output.send(Message::PostRekying(diffie_hellman_send)).await;
                 }
-                MessageSend::Dh_Back(_diffie_hellman_send) => error!("Rekying sending Error"),
+                MessageSend::Dh_Back(diffie_hellman_send) => {
+                    output
+                        .send(Message::IncomingDhBack(diffie_hellman_send))
+                        .await;
+                }
             }
         }
     })

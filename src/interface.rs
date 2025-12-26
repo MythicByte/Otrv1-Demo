@@ -93,6 +93,8 @@ use crate::{
         ServerClientModell,
         diffie_hellman_check_singed,
         generate_db_to_send,
+        give_pub_key_back,
+        reading_keying,
         setup_connection,
     },
     screen::{
@@ -132,9 +134,9 @@ pub struct Keys {
 }
 #[derive(Debug, Clone)]
 pub enum Message {
+    IncomingDhBack(DiffieHellmanSend),
     AddScrollableList(Vec<Nachricht>),
     ScrollCheckNewInput,
-    InitialRekying(DiffieHellmanSend),
     PostRekying(DiffieHellmanSend),
     Rekying,
     GetSendMessage(MessageSend),
@@ -427,23 +429,12 @@ impl App {
                 // Checks what's heppening when A Dh is comming in
                 MessageSend::Dh(diffie_hellman_send) => {
                     if let Some(reader) = self.symmetric_key
-                        && let Some(dh) = self.diffie_hellman_key
+                        && let Some(dh) = &mut self.diffie_hellman_key
                         && let Some(writer) = self.write_stream.clone()
                     {
                         info!("Dh from other Person recieved");
-                        return Task::perform(
-                            dh_not_signed_write_only(reader, writer, diffie_hellman_send),
-                            |x| {
-                                info!("{:?}", x);
-                                match x {
-                                    Ok(_) => Message::DoNothing,
-                                    Err(error) => {
-                                        error!("Error with rekying has happend: {}", error);
-                                        Message::DisconnectOtherUser
-                                    }
-                                }
-                            },
-                        );
+                        // let (key, message_to_other_user) = reading_keying(dh, message);
+                        // return Task::perform(future, f);
                     }
                 }
                 // Check Later
@@ -478,16 +469,54 @@ impl App {
                 }
             }
             (Message::PostRekying(diffie), ScreenDisplay::Home) => {
-                if let Some(writer) = self.write_stream.clone() {
+                if let None = self.diffie_hellman_key {
+                    match generate_db_to_send() {
+                        Ok(x) => {
+                            info!("Keys are rotated");
+                            self.diffie_hellman_key = Some(x.0);
+                        }
+                        Err(_) => {
+                            error!("With the Rekying");
+                            return Task::none();
+                        }
+                    };
+                }
+                if let Some(writer) = self.write_stream.clone()
+                    && let Some(diffie_hellman_key) = &mut self.diffie_hellman_key
+                {
                     info!("rekying incoming");
-                    let message = match postcard::to_allocvec(&diffie) {
+                    let (key) = match reading_keying(diffie_hellman_key, &diffie) {
                         Ok(x) => x,
-                        Err(_) => return Task::none(),
+                        Err(e) => {
+                            error!("Error with1: {}", e);
+                            return Task::none();
+                        }
+                    };
+
+                    info!("Keys are rotated");
+                    self.symmetric_key = Some(key);
+                    // Only for testing on
+                    // dbg!(&self.symmetric_key);
+                    let send_back = match give_pub_key_back(diffie_hellman_key) {
+                        Ok(x) => x,
+                        Err(_) => {
+                            error!("With send back Erro");
+                            return Task::none();
+                        }
+                    };
+                    let to_serialize_output = MessageSend::Dh_Back(send_back);
+                    let message = match postcard::to_allocvec(&to_serialize_output) {
+                        Ok(x) => x,
+                        Err(_) => {
+                            error!("Serialize Error");
+                            return Task::none();
+                        }
                     };
                     return Task::perform(post_message(writer, message), |x| {
                         if let Err(e) = x {
                             error!("Error with Rekying: {}", e);
                         }
+                        info!("Rekying is send back");
                         Message::DoNothing
                     });
                 }
@@ -513,6 +542,19 @@ impl App {
             (Message::AddScrollableList(add), ScreenDisplay::Home) => {
                 self.list_scrollable.extend(add);
                 self.message_last_id = self.list_scrollable.len() as u64;
+            }
+            (Message::IncomingDhBack(dh), ScreenDisplay::Home) => {
+                if let Some(dh_key) = &mut self.diffie_hellman_key {
+                    let new_key = match reading_keying(dh_key, &dh) {
+                        Ok(x) => x,
+                        Err(_) => {
+                            error!("Error with Dh");
+                            return Task::none();
+                        }
+                    };
+                    self.symmetric_key = Some(new_key);
+                    info!("Rekying worked");
+                }
             }
             _ => return Task::none(),
         }
@@ -556,7 +598,10 @@ impl App {
         ))
         .center();
         // Comment later out, only for testing
-        let reky_button = button("One Reky").on_press(Message::Rekying);
+        // Only make on for testing
+        //
+        // let reky_button: Element<'_, Message> =
+        // button("One Reky").on_press(Message::Rekying).into();
         let online_indicator: Element<'_, Message> = container("")
             .style(|_: &Theme| {
                 let color = if self.online {
@@ -576,7 +621,10 @@ impl App {
             .into();
         let status_row = row![
             ip_to_text,
-            reky_button,
+            // The Button for testing the rekying feature
+            //
+            // Space::new().width(5),
+            // reky_button,
             horizontal().width(Length::Fill),
             online_indicator,
             Space::new().width(5),

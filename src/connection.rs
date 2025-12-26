@@ -181,6 +181,12 @@ impl Iv {
             };
         }
     }
+    pub fn check_rekying_should_be_done(&self) -> bool {
+        if self.0[8] == 255 {
+            return true;
+        }
+        false
+    }
 }
 #[cfg(test)]
 mod tests {

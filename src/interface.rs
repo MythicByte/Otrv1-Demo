@@ -3,6 +3,7 @@ use iced::{
     Color,
     Element,
     Pixels,
+    Subscription,
     Theme,
     border::Radius,
     widget::{
@@ -20,7 +21,10 @@ use serde::{
     Deserialize,
     Serialize,
 };
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::Context;
 use chrono::{
@@ -127,7 +131,7 @@ pub enum Message {
     AddScrollableList(Vec<Nachricht>),
     ScrollCheckNewInput,
     PostRekying(DiffieHellmanSend),
-    Rekying(ServerClientModell),
+    Rekying,
     GetSendMessage(MessageSend),
     /// Disconnect to the other user
     DisconnectOtherUser,
@@ -270,7 +274,12 @@ impl App {
                         key,
                         old_mac_key,
                     ) {
-                        Ok(x) => x,
+                        Ok(x) => {
+                            if self.iv.check_rekying_should_be_done() {
+                                return Task::done(Message::Rekying);
+                            }
+                            x
+                        }
                         Err(e) => {
                             error!("Encryption Failed {}", e);
                             return Task::none();
@@ -430,7 +439,7 @@ impl App {
                     }
                 }
             },
-            (Message::Rekying(_), ScreenDisplay::Home) => {
+            (Message::Rekying, ScreenDisplay::Home) => {
                 if let Some(reader) = self.read_stream.clone()
                     && let Some(writer) = self.write_stream.clone()
                 {
@@ -603,5 +612,8 @@ impl App {
             0 => row![x, Space::new().width(Length::Fill)].into(),
             _ => row![Space::new().width(Length::Fill), x].into(),
         };
+    }
+    pub fn subscribtion(&self) -> Subscription<Message> {
+        iced::time::every(Duration::from_mins(10)).map(|_| Message::Rekying)
     }
 }

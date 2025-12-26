@@ -1,7 +1,4 @@
-use std::{
-    ops::AddAssign,
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use anyhow::{
     Context,
@@ -21,10 +18,7 @@ use openssl::{
         PKey,
         Private,
     },
-    sign::{
-        Signer,
-        Verifier,
-    },
+    sign::Signer,
     symm::{
         Cipher,
         decrypt,
@@ -109,14 +103,11 @@ pub fn encrpyt_data_for_transend(
     let aes_256_ctr = Cipher::aes_256_ctr();
     let ciphertext =
         encrypt(aes_256_ctr, &key, Some(&app.iv.0), &message).context("Encrpytion Failed")?;
-    let (hmac_key, hmac_signer_final_key) = hmac(key, message)?;
-    let mut sign =
-        Signer::new(MessageDigest::sha3_512(), &hmac_key).context("Signer creation failed")?;
-    sign.update(&ciphertext).context("Error with mac")?;
-    let final_hmac = sign.sign_to_vec().context("mac error")?;
+    let (hmac_key, hmac_signer_final_key) = hmac(key, message.clone())?;
+    dbg!(&hmac_key);
     let send_message = MessageSend::Encrypted {
         content: ciphertext,
-        mac: final_hmac,
+        mac: hmac_key,
         old_mac_key: old_mac.try_into().context("Try into failed")?,
         new_open_key: Vec::new(),
     };
@@ -125,39 +116,38 @@ pub fn encrpyt_data_for_transend(
         Err(_) => return Err(anyhow!("Error with mac conversion")),
     };
     app.old_mac = Some(old_mac_add);
-    dbg!(&send_message);
     app.iv.add_one();
     Ok(send_message)
 }
 pub fn decrypt_data_for_transend(
-    iv: Iv,
+    app: &mut App,
     message: Vec<u8>,
     key: [u8; 32],
     mac: [u8; 64],
 ) -> anyhow::Result<Vec<u8>> {
     let aes_256_ctr = Cipher::aes_256_ctr();
-    let (hmac_key, hmac_key_final) = hmac(key, message.clone()).context("Hmac Error")?;
-    let creat_hmac = Signer::new(MessageDigest::sha512(), &hmac_key)
-        .context("hmac creation error")?
-        .sign_to_vec()
-        .context("Vec error")?;
-    let hmac_key = PKey::hmac(&creat_hmac).context("Hmac Error")?;
-    let mut verifiy =
-        Signer::new(MessageDigest::sha3_512(), &hmac_key).context("Verifyer failed creation")?;
-    verifiy.update(&message).context("Verifyer failed update")?;
-    let result = verifiy.sign_to_vec().context("Signer Result Error")?;
+    let cleartext =
+        decrypt(aes_256_ctr, &key, Some(&app.iv.0), &message).context("Encrpytion Failed")?;
+
+    let result: [u8; 64] = match hmac(key, cleartext.clone())?.0.try_into() {
+        Ok(x) => x,
+        Err(_) => {
+            error!("Error with the tag conversition");
+            return Err(anyhow!("Error with tag"));
+        }
+    };
     if result != mac {
         error!("Mac Tag failed");
+        dbg!(&result, &cleartext);
         return Err(anyhow!("Mac Authentication Failed"));
     }
-    let cleartext =
-        decrypt(aes_256_ctr, &key, Some(&iv.0), &message).context("Encrpytion Failed")?;
+    app.iv.add_one();
     Ok(cleartext)
 }
-fn hmac(key: [u8; 32], message: Vec<u8>) -> Result<(PKey<Private>, Vec<u8>), ErrorStack> {
+fn hmac(key: [u8; 32], message: Vec<u8>) -> Result<(Vec<u8>, Vec<u8>), ErrorStack> {
     const IPAD: u8 = 0x36;
     const OPAD: u8 = 0x5c;
-    let xor1 = key.map(|x| x & IPAD);
+    let xor1 = key.map(|x| x ^ IPAD);
     let xor1 = PKey::hmac(&xor1)?;
     let mut sign = Signer::new(MessageDigest::sha3_512(), &xor1)?;
     sign.update(&message)?;
@@ -167,7 +157,7 @@ fn hmac(key: [u8; 32], message: Vec<u8>) -> Result<(PKey<Private>, Vec<u8>), Err
     let mut hmac_signer = Signer::new(MessageDigest::sha3_512(), &xor2)?;
     hmac_signer.update(&hmac_final_key)?;
     let hmac_key = hmac_signer.sign_to_vec()?;
-    let hmac_final = PKey::hmac(&hmac_key)?;
+    let hmac_final = PKey::hmac(&hmac_key)?.raw_private_key()?;
     Ok((hmac_final, hmac_final_key))
 }
 #[derive(Debug, Clone, Default)]

@@ -387,14 +387,13 @@ impl App {
                             Ok(x) => x,
                             Err(_) => return Task::none(),
                         };
-                        let clear_text =
-                            match decrypt_data_for_transend(self.iv.clone(), content, key, mac) {
-                                Ok(x) => x,
-                                Err(e) => {
-                                    error!("Decryption Error Ignore {}", e);
-                                    return Task::none();
-                                }
-                            };
+                        let clear_text = match decrypt_data_for_transend(self, content, key, mac) {
+                            Ok(x) => x,
+                            Err(e) => {
+                                error!("Decryption Error Ignore {}", e);
+                                return Task::none();
+                            }
+                        };
                         let text = match String::from_utf8(clear_text) {
                             Ok(x) => x,
                             Err(_) => {

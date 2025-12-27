@@ -2,15 +2,15 @@
 ## Introduction
 This is a demo project for the Ortv1 Protocol.
 There a differenc to the original version, the same cryptographic standard are used. But they have different parameters.
-Which are safe to use toady, the one choosem from 2004 are all insecure today. 
-For technical Detail see the docs for the Code.
+Which are safe to use toady, the one choosen from 2004 are all insecure today. 
+For technical Details see the docs for the Code.
 ## Building
 Requirments:
-[Openssl Rust Bindings](https://docs.rs/openssl/latest/openssl/) install the requirments. It is staticly linked with the rest of the code.
+[Openssl Rust Bindings](https://docs.rs/openssl/latest/openssl/) install the requirments. It is statistcly linked with the rest of the code.
 [Sqlite Requirments](https://lib.rs/crates/sqlx) Sqlite must be installed on the system.
 Rust version: 1.92 stable
 This was the only version that was tested for building.
-Supported Platform: Linux,Windows,Mac should be all supportec because of [iced](https://github.com/iced-rs/iced) supporting it.
+Supported Platform: Linux,Windows,Mac should be all supported because of [iced](https://github.com/iced-rs/iced) supporting it.
 Only Linux x64-x86 tested;
 
 ## Test

@@ -20,6 +20,8 @@ Run the test to check if the Sqlite is working correctly.
 In the /key directory are two X509 files. And then two Pkcs12 files with the .p12 extension.
 Password for both Pkcs12 is **password123**. Should you close a window, it should reconnect when opening the same window again with the same configs.
 
+## Limitation
+Like the OTRv1 Protcol says only two people can chat and must be online for it.
 ## Example
 - A User1
 - bob.pem 

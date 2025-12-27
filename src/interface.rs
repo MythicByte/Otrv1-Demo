@@ -16,6 +16,7 @@ use iced::{
     Theme,
     border::Radius,
     widget::{
+        Container,
         Space,
         button,
         container,
@@ -682,10 +683,10 @@ impl App {
             .to_string();
         let x: Element<'_, Message> = column![
             text(info.message_text.clone()).size(20).center(),
-            text(clock_number).size(10)
+            text(clock_number).size(10).center()
         ]
         .into();
-        let x: Element<'_, Message> = container(x)
+        let x: Container<'_, Message> = container(x)
             .style(|theme: &Theme| {
                 let palette = theme.extended_palette();
                 match info.person_from {
@@ -703,8 +704,16 @@ impl App {
             })
             .into();
         return match info.person_from {
-            0 => row![x, Space::new().width(Length::Fill)].into(),
-            _ => row![Space::new().width(Length::Fill), x].into(),
+            0 => row![
+                x.align_left(Length::Shrink),
+                Space::new().width(Length::Fill)
+            ]
+            .into(),
+            _ => row![
+                Space::new().width(Length::Fill),
+                x.align_right(Length::Shrink)
+            ]
+            .into(),
         };
     }
     /// That every ten minutes a DH Rekying  is happening

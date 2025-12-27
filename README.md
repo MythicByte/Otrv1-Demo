@@ -15,7 +15,8 @@ Only Linux x64-x86 tested;
 
 ## Test
 Run the test to check if the Sqlite is working correctly.
-
+# Warning
+Do not use in a open network, this application has no DDOS protection. It should only be run in a localnetowork or on localhost. 
 # Use
 In the /key directory are two X509 files. And then two Pkcs12 files with the .p12 extension.
 Password for both Pkcs12 is **password123**. Should you close a window, it should reconnect when opening the same window again with the same configs.

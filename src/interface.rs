@@ -8,111 +8,46 @@
 //! The **update** Is there for mutating the data and making task possibel.
 //! [App](crate::interface::App) and [Screen](crate::screen::Screen) have there one update and view methode which are pullen, when one is on focus.
 use iced::{
-    Border,
-    Color,
-    Element,
-    Pixels,
-    Subscription,
-    Theme,
+    Border, Color, Element, Pixels, Subscription, Theme,
     border::Radius,
     widget::{
-        Container,
-        Space,
-        button,
-        container,
-        rule,
-        scrollable::{
-            Direction,
-            Scrollbar,
-        },
+        Container, Space, button, container, rule,
+        scrollable::{Direction, Scrollbar},
     },
 };
-use openssl::{
-    dh::Dh,
-    pkey::Private,
-};
-use serde::{
-    Deserialize,
-    Serialize,
-};
-use std::{
-    sync::Arc,
-    time::Duration,
-};
+use openssl::{dh::Dh, pkey::Private};
+use serde::{Deserialize, Serialize};
+use std::{sync::Arc, time::Duration};
 
 use anyhow::Context;
-use chrono::{
-    DateTime,
-    Local,
-    Utc,
-};
+use chrono::{DateTime, Local, Utc};
 use iced::{
     self,
-    Length::{
-        self,
-    },
+    Length::{self},
     Task,
-    alignment::{
-        Horizontal,
-        Vertical,
-    },
-    widget::{
-        column,
-        row,
-        scrollable,
-        space::horizontal,
-        text,
-        text_editor,
-    },
+    alignment::{Horizontal, Vertical},
+    widget::{column, row, scrollable, space::horizontal, text, text_editor},
 };
-use sqlx::{
-    Pool,
-    Sqlite,
-    prelude::FromRow,
-    sqlite::SqlitePoolOptions,
-};
+use sqlx::{Pool, Sqlite, prelude::FromRow, sqlite::SqlitePoolOptions};
 use tokio::{
-    net::tcp::{
-        OwnedReadHalf,
-        OwnedWriteHalf,
-    },
+    net::tcp::{OwnedReadHalf, OwnedWriteHalf},
     runtime::Runtime,
     sync::Mutex,
 };
-use tracing::{
-    error,
-    info,
-};
+use tracing::{error, info};
 
 use crate::{
     connection::{
-        Iv,
-        check_if_other_user_only,
-        decrypt_data_for_transend,
-        encrpyt_data_for_transend,
+        Iv, check_if_other_user_only, decrypt_data_for_transend, encrpyt_data_for_transend,
         post_message,
     },
-    db::{
-        read_nachricht_with_id_max,
-        write_db,
-    },
+    db::{read_nachricht_with_id_max, write_db},
     interface,
     net::{
-        DiffieHellmanSend,
-        MessageSend,
-        ServerClientModell,
-        diffie_hellman_check_singed,
-        generate_db_to_send,
-        give_pub_key_back,
-        reading_keying,
-        setup_connection,
+        DiffieHellmanSend, MessageSend, ServerClientModell, diffie_hellman_check_singed,
+        generate_db_to_send, give_pub_key_back, reading_keying, setup_connection,
     },
-    screen::{
-        self,
-        ConnectValues,
-        Screen,
-        ScreenMessage,
-    },
+    screen::{self, ConnectValues, Screen, ScreenMessage},
 };
 /// The main struct for the gui and application
 pub struct App {
@@ -718,6 +653,6 @@ impl App {
     }
     /// That every ten minutes a DH Rekying  is happening
     pub fn subscribtion(&self) -> Subscription<Message> {
-        iced::time::every(Duration::from_mins(10)).map(|_| Message::Rekying)
+        iced::time::every(Duration::from_mins(1)).map(|_| Message::Rekying)
     }
 }

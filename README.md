@@ -21,7 +21,7 @@ In the /key directory are two X509 files. And then two Pkcs12 files with the .p1
 Password for both Pkcs12 is **password123**. Should you close a window, it should reconnect when opening the same window again with the same configs.
 
 ## Limitation
-Like the OTRv1 Protcol says only two people can chat and must be online for it.
+Like the OTRv1 Protcol says only two people can chat and must be online for it. And that the Rekying not happening every message, it is happening every minute or after a limit of messages.
 ## Example
 - A User1
 - bob.pem 

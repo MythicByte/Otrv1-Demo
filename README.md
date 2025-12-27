@@ -21,9 +21,13 @@ In the /key directory are two X509 files. And then two Pkcs12 files with the .p1
 Password for both Pkcs12 is **password123**. Should you close a window, it should reconnect when opening the same window again with the same configs.
 
 ## Example
--A  B
--Bob.pem Alice.pem
--Alice.p12 Bob.p12
+- A User1
+- bob.pem 
+- alice.p12 
+
+- B User2
+- alice.pem
+- bob.p12
 
 # Conclusion
 For more infos read the docs of the rust code. With '''cargo doc --open --no-deps''' to open the docs.

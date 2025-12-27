@@ -1,3 +1,12 @@
+//! # Gui
+//! This is the main gui application code.
+//! The start Screen is descript in [Screen](crate::screen::Screen), there is the entire config for loading the building values.
+//!
+//! # Iced gui Recap
+//! The [Message](crate::interface::Message) are the **Signals** for the application. They react with it and can be seen with the debugger.
+//! The **view** methode gives back the iced gui Elements thart are displayed.
+//! The **update** Is there for mutating the data and making task possibel.
+//! [App](crate::interface::App) and [Screen](crate::screen::Screen) have there one update and view methode which are pullen, when one is on focus.
 use iced::{
     Border,
     Color,

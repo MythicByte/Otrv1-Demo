@@ -12,6 +12,7 @@ use openssl::{
     },
     pkey::{
         PKey,
+        Params,
         Private,
         Public,
     },
@@ -137,7 +138,7 @@ pub async fn diffie_hellman_check_singed(
         Some(x) => x,
         None => return Err(ErrorDiffieHellman::SigningKeyNotThere),
     };
-    let diffie_hellman = Dh::get_2048_256().map_err(|_| ErrorDiffieHellman::DHGeneration)?;
+    let diffie_hellman = generate_rf_3526_4096().map_err(|_| ErrorDiffieHellman::DHGeneration)?;
     let diffie_hellman_key = diffie_hellman
         .generate_key()
         .map_err(|_| ErrorDiffieHellman::DHKeyGeneration)?;
@@ -267,7 +268,7 @@ pub async fn setup_connection(ip: SocketAddr) -> anyhow::Result<(TcpStream, Serv
 }
 /// Write the Dh in the Thing for Rekying without signing
 pub fn generate_db_to_send() -> Result<(Dh<Private>, DiffieHellmanSend), ErrorDiffieHellman> {
-    let diffie_hellman = Dh::get_2048_256().map_err(|_| ErrorDiffieHellman::DHGeneration)?;
+    let diffie_hellman = generate_rf_3526_4096().map_err(|_| ErrorDiffieHellman::DHGeneration)?;
     let diffie_hellman_key = diffie_hellman
         .generate_key()
         .map_err(|_| ErrorDiffieHellman::DHKeyGeneration)?;
@@ -301,4 +302,13 @@ pub fn give_pub_key_back(key: &mut Dh<Private>) -> anyhow::Result<DiffieHellmanS
     let mut output = DiffieHellmanSend::default();
     output.open_key = pub_key;
     Ok(output)
+}
+/// Generates the DH Keys
+///
+/// 4096-bit MODP Group from the rfc 3526
+fn generate_rf_3526_4096() -> Result<Dh<Params>, ErrorDiffieHellman> {
+    let p = BigNum::get_rfc3526_prime_4096()?;
+    let g = BigNum::from_u32(2)?;
+    let dh = Dh::from_pqg(p, None, g)?;
+    Ok(dh)
 }

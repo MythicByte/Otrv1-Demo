@@ -69,7 +69,10 @@ use sqlx::{
     Pool,
     Sqlite,
     prelude::FromRow,
-    sqlite::SqlitePoolOptions,
+    sqlite::{
+        SqliteConnectOptions,
+        SqlitePoolOptions,
+    },
 };
 use tokio::{
     net::tcp::{
@@ -228,9 +231,12 @@ impl App {
     fn new_result() -> anyhow::Result<Self> {
         let rt = Runtime::new().context("The tokio Runtime Failed")?;
         let pool = rt.block_on(async {
+            let start_optins = SqliteConnectOptions::new()
+                .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+                .in_memory(true);
             let pool = SqlitePoolOptions::new()
                 .max_connections(4)
-                .connect("sqlite::memory:")
+                .connect_with(start_optins)
                 .await
                 .expect("Sqlite Pool failed");
             sqlx::migrate!("./migrations")

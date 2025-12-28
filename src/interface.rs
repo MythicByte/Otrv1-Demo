@@ -29,6 +29,10 @@ use iced::{
 };
 use openssl::{
     dh::Dh,
+    hash::{
+        MessageDigest,
+        hash,
+    },
     pkey::Private,
 };
 use serde::{
@@ -69,7 +73,10 @@ use sqlx::{
     Pool,
     Sqlite,
     prelude::FromRow,
-    sqlite::SqlitePoolOptions,
+    sqlite::{
+        SqliteConnectOptions,
+        SqlitePoolOptions,
+    },
 };
 use tokio::{
     net::tcp::{
@@ -144,6 +151,8 @@ pub struct App {
     pub iv: Iv,
     /// The DH key for Rekying
     pub diffie_hellman_key: Option<Dh<Private>>,
+    /// The HMAC key derived from the symmetric key
+    pub hmac_key: Option<[u8; 64]>,
 }
 /// The Signals for Iced Runtime
 ///
@@ -228,9 +237,12 @@ impl App {
     fn new_result() -> anyhow::Result<Self> {
         let rt = Runtime::new().context("The tokio Runtime Failed")?;
         let pool = rt.block_on(async {
+            let start_optins = SqliteConnectOptions::new()
+                .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+                .in_memory(true);
             let pool = SqlitePoolOptions::new()
                 .max_connections(4)
-                .connect("sqlite::memory:")
+                .connect_with(start_optins)
                 .await
                 .expect("Sqlite Pool failed");
             sqlx::migrate!("./migrations")
@@ -256,6 +268,7 @@ impl App {
             message_last_id: 0,
             iv: Iv::default(),
             diffie_hellman_key: None,
+            hmac_key: None,
         })
     }
     /// The Loop that updates Variabels and do the have leafting
@@ -309,7 +322,9 @@ impl App {
                 if self.message.is_empty() || !self.online {
                     return Task::none();
                 }
-                if let Some(key) = self.symmetric_key {
+                if let Some(key) = self.symmetric_key
+                    && let Some(hmac_key_raw) = self.hmac_key
+                {
                     let old_mac_key = self.old_mac.unwrap_or([0; 64]);
                     let text = self.message.text();
                     // Refreshed the text edit
@@ -321,6 +336,7 @@ impl App {
                         text.clone().into(),
                         key,
                         old_mac_key,
+                        hmac_key_raw,
                     ) {
                         Ok(x) => {
                             if self.iv.check_rekying_should_be_done() {
@@ -344,7 +360,8 @@ impl App {
                     if let Some(stream) = &self.write_stream {
                         return Task::perform(post_message(stream.clone(), send), |_| {
                             Message::MessageInsert(nachricht)
-                        });
+                        })
+                        .chain(Task::done(Message::Rekying));
                         // .chain(Task::done(Message::Rekying(ServerClientModell::Client)));
                     }
                 }
@@ -387,6 +404,13 @@ impl App {
                     Err(_) => return Task::done(Message::SwitchStartScreen),
                 };
                 self.symmetric_key = Some(key);
+                self.hmac_key = Some(
+                    hash(MessageDigest::sha3_512(), &key)
+                        .map(|x| x.to_vec())
+                        .unwrap_or(vec![0; 64])
+                        .try_into()
+                        .unwrap_or([0; 64]),
+                );
                 let (reader, writer) = stream.into_inner().into_split();
                 self.read_stream = Some(Arc::new(Mutex::new(reader)));
                 self.write_stream = Some(Arc::new(Mutex::new(writer)));
@@ -423,13 +447,21 @@ impl App {
             }
             (Message::GetSendMessage(message), ScreenDisplay::Home) => match message {
                 MessageSend::Encrypted { content, mac, .. } => {
-                    if let Some(key) = self.symmetric_key {
+                    if let Some(key) = self.symmetric_key
+                        && let Some(hmac_key_raw) = self.hmac_key
+                    {
                         info!("Message got in");
                         let mac = match mac.try_into() {
                             Ok(x) => x,
                             Err(_) => return Task::none(),
                         };
-                        let clear_text = match decrypt_data_for_transend(self, content, key, mac) {
+                        let clear_text = match decrypt_data_for_transend(
+                            self,
+                            content,
+                            key,
+                            mac,
+                            hmac_key_raw,
+                        ) {
                             Ok(x) => x,
                             Err(e) => {
                                 error!("Decryption Error Ignore {}", e);
@@ -505,6 +537,13 @@ impl App {
 
                     info!("Keys are rotated");
                     self.symmetric_key = Some(key);
+                    self.hmac_key = Some(
+                        hash(MessageDigest::sha3_512(), &key)
+                            .map(|x| x.to_vec())
+                            .unwrap_or(vec![0; 64])
+                            .try_into()
+                            .unwrap_or([0; 64]),
+                    );
                     // Only for testing on
                     // dbg!(&self.symmetric_key);
                     let send_back = match give_pub_key_back(diffie_hellman_key) {
@@ -560,6 +599,13 @@ impl App {
                         }
                     };
                     self.symmetric_key = Some(new_key);
+                    self.hmac_key = Some(
+                        hash(MessageDigest::sha3_512(), &new_key)
+                            .map(|x| x.to_vec())
+                            .unwrap_or(vec![0; 64])
+                            .try_into()
+                            .unwrap_or([0; 64]),
+                    );
                     info!("Rekying worked");
                 }
             }

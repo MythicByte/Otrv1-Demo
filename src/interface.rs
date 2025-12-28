@@ -29,7 +29,13 @@ use iced::{
 };
 use openssl::{
     dh::Dh,
+    hash::{
+        DigestBytes,
+        MessageDigest,
+        hash,
+    },
     pkey::Private,
+    sign::Signer,
 };
 use serde::{
     Deserialize,
@@ -69,7 +75,11 @@ use sqlx::{
     Pool,
     Sqlite,
     prelude::FromRow,
-    sqlite::SqlitePoolOptions,
+    sqlite::{
+        SqliteConnectOptions,
+        SqliteJournalMode,
+        SqlitePoolOptions,
+    },
 };
 use tokio::{
     net::tcp::{
@@ -99,6 +109,7 @@ use crate::{
     interface,
     net::{
         DiffieHellmanSend,
+        ErrorDiffieHellman,
         MessageSend,
         ServerClientModell,
         diffie_hellman_check_singed,
@@ -144,6 +155,10 @@ pub struct App {
     pub iv: Iv,
     /// The DH key for Rekying
     pub diffie_hellman_key: Option<Dh<Private>>,
+    /// The new Dh key replaces the old
+    pub new_diffie_hellman_key: Option<Dh<Private>>,
+    /// The HMAC Key
+    pub mac_key: Option<[u8; 32]>,
 }
 /// The Signals for Iced Runtime
 ///
@@ -228,9 +243,14 @@ impl App {
     fn new_result() -> anyhow::Result<Self> {
         let rt = Runtime::new().context("The tokio Runtime Failed")?;
         let pool = rt.block_on(async {
+            let start_options = SqliteConnectOptions::new()
+                .in_memory(true)
+                .journal_mode(SqliteJournalMode::Wal);
             let pool = SqlitePoolOptions::new()
                 .max_connections(4)
-                .connect("sqlite::memory:")
+                .test_before_acquire(true)
+                .connect_with(start_options)
+                // .connect("sqlite::memory:")
                 .await
                 .expect("Sqlite Pool failed");
             sqlx::migrate!("./migrations")
@@ -256,6 +276,8 @@ impl App {
             message_last_id: 0,
             iv: Iv::default(),
             diffie_hellman_key: None,
+            new_diffie_hellman_key: None,
+            mac_key: None,
         })
     }
     /// The Loop that updates Variabels and do the have leafting
@@ -316,15 +338,48 @@ impl App {
                     self.message = text_editor::Content::new();
                     // To the Async Function that sends the code
                     let local_time = Utc::now();
+                    let new_dh = match self
+                        .new_diffie_hellman_key
+                        .take()
+                        .ok_or(ErrorDiffieHellman::DHGeneration)
+                        .or_else(|_| generate_db_to_send().map(|r| r.0))
+                    {
+                        Ok(x) => x,
+                        Err(_) => {
+                            error!("Error with Dh key for transit of a message");
+                            return Task::none();
+                        }
+                    };
+                    let new_dh_open_key = new_dh.public_key().to_vec();
+                    self.new_diffie_hellman_key = Some(new_dh);
+                    let hmac_key = match self.mac_key {
+                        Some(x) => x,
+                        None => {
+                            let hasher = hash(MessageDigest::sha3_256(), &key)
+                                .map(|x| x.to_vec())
+                                .unwrap_or(vec![0; 32]);
+                            let output: [u8; 32] = match hasher.try_into() {
+                                Ok(x) => x,
+                                Err(_) => [0; 32],
+                            };
+                            output
+                        }
+                    };
                     let send_message = match encrpyt_data_for_transend(
                         self,
                         text.clone().into(),
                         key,
+                        hmac_key,
                         old_mac_key,
+                        new_dh_open_key,
                     ) {
                         Ok(x) => {
+                            // Makes the Rekying nad send the message
                             if self.iv.check_rekying_should_be_done() {
-                                return Task::done(Message::Rekying);
+                                return Task::batch(vec![
+                                    Task::done(Message::Rekying),
+                                    Task::done(Message::PostMessageToPeer),
+                                ]);
                             }
                             x
                         }
@@ -337,10 +392,12 @@ impl App {
                     // We are witing to the db know ignore
                     // self.list_scrollable.push(nachricht.clone());
                     info!("nachricht wurde verschickt");
+                    // dbg!(&send_message);
                     let send = match postcard::to_allocvec(&send_message) {
                         Ok(x) => x,
                         Err(_) => return Task::done(Message::SwitchStartScreen),
                     };
+                    // dbg!(&send
                     if let Some(stream) = &self.write_stream {
                         return Task::perform(post_message(stream.clone(), send), |_| {
                             Message::MessageInsert(nachricht)
@@ -422,20 +479,28 @@ impl App {
                 }
             }
             (Message::GetSendMessage(message), ScreenDisplay::Home) => match message {
-                MessageSend::Encrypted { content, mac, .. } => {
-                    if let Some(key) = self.symmetric_key {
+                MessageSend::Encrypted {
+                    content,
+                    mac,
+                    new_open_dh_key_not_singed,
+                    ..
+                } => {
+                    if let Some(key) = self.symmetric_key
+                        && let Some(hmac_key) = self.mac_key
+                    {
                         info!("Message got in");
                         let mac = match mac.try_into() {
                             Ok(x) => x,
                             Err(_) => return Task::none(),
                         };
-                        let clear_text = match decrypt_data_for_transend(self, content, key, mac) {
-                            Ok(x) => x,
-                            Err(e) => {
-                                error!("Decryption Error Ignore {}", e);
-                                return Task::none();
-                            }
-                        };
+                        let clear_text =
+                            match decrypt_data_for_transend(self, content, key, mac, hmac_key) {
+                                Ok(x) => x,
+                                Err(e) => {
+                                    error!("Decryption Error Ignore {}", e);
+                                    return Task::none();
+                                }
+                            };
                         let text = match String::from_utf8(clear_text) {
                             Ok(x) => x,
                             Err(_) => {
@@ -448,7 +513,12 @@ impl App {
                         // Fix Later
                         // self.list_scrollable.push(nachricht.clone());
                         info!("Nachricht was recieved");
-                        return Task::done(Message::MessageInsert(nachricht));
+                        let mut new_diffie = DiffieHellmanSend::default();
+                        new_diffie.open_key = new_open_dh_key_not_singed;
+                        return Task::batch(vec![
+                            Task::done(Message::MessageInsert(nachricht)),
+                            Task::done(Message::PostRekying(new_diffie)),
+                        ]);
                     }
                 }
                 // Checks what's heppening when A Dh is comming in
@@ -560,6 +630,13 @@ impl App {
                         }
                     };
                     self.symmetric_key = Some(new_key);
+                    self.mac_key = Some(
+                        hash(MessageDigest::sha3_256(), &new_key)
+                            .map(|x| x.to_vec())
+                            .unwrap_or(vec![0; 32])
+                            .try_into()
+                            .unwrap_or([0; 32]),
+                    );
                     info!("Rekying worked");
                 }
             }

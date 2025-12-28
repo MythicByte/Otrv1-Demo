@@ -107,23 +107,22 @@ pub fn encrpyt_data_for_transend(
     app: &mut App,
     message: Vec<u8>,
     key: [u8; 32],
+    hmac_key: [u8; 32],
     old_mac: [u8; 64],
+    new_open_key: Vec<u8>,
 ) -> anyhow::Result<MessageSend> {
     let aes_256_ctr = Cipher::aes_256_ctr();
     let ciphertext =
         encrypt(aes_256_ctr, &key, Some(&app.iv.0), &message).context("Encrpytion Failed")?;
-    let (hmac_key, hmac_signer_final_key) = hmac(key, message.clone())?;
+    let hmac_key = hmac(hmac_key, message.clone())?;
     // dbg!(&hmac_key);
     let send_message = MessageSend::Encrypted {
         content: ciphertext,
         mac: hmac_key,
         old_mac_key: old_mac.into(),
+        new_open_dh_key_not_singed: new_open_key,
     };
-    let old_mac_add: [u8; 64] = match hmac_signer_final_key.try_into() {
-        Ok(x) => x,
-        Err(_) => return Err(anyhow!("Error with mac conversion")),
-    };
-    app.old_mac = Some(old_mac_add);
+    app.old_mac = Some(old_mac);
     app.iv.add_one();
     Ok(send_message)
 }
@@ -133,12 +132,13 @@ pub fn decrypt_data_for_transend(
     message: Vec<u8>,
     key: [u8; 32],
     mac: [u8; 64],
+    hmac_key: [u8; 32],
 ) -> anyhow::Result<Vec<u8>> {
     let aes_256_ctr = Cipher::aes_256_ctr();
     let cleartext =
         decrypt(aes_256_ctr, &key, Some(&app.iv.0), &message).context("Encrpytion Failed")?;
 
-    let result: [u8; 64] = match hmac(key, cleartext.clone())?.0.try_into() {
+    let result: [u8; 64] = match hmac(hmac_key, cleartext.clone())?.try_into() {
         Ok(x) => x,
         Err(_) => {
             error!("Error with the tag conversition");
@@ -156,7 +156,7 @@ pub fn decrypt_data_for_transend(
 /// Easy help Wrapper for a hmac with SHA3 512
 ///
 /// Meeded because oppenssl rust has no bindings to it
-fn hmac(key: [u8; 32], message: Vec<u8>) -> Result<(Vec<u8>, Vec<u8>), ErrorStack> {
+fn hmac(key: [u8; 32], message: Vec<u8>) -> Result<Vec<u8>, ErrorStack> {
     const IPAD: u8 = 0x36;
     const OPAD: u8 = 0x5c;
     let xor1 = key.map(|x| x ^ IPAD);
@@ -170,7 +170,7 @@ fn hmac(key: [u8; 32], message: Vec<u8>) -> Result<(Vec<u8>, Vec<u8>), ErrorStac
     hmac_signer.update(&hmac_final_key)?;
     let hmac_key = hmac_signer.sign_to_vec()?;
     let hmac_final = PKey::hmac(&hmac_key)?.raw_private_key()?;
-    Ok((hmac_final, hmac_final_key))
+    Ok(hmac_final)
 }
 /// The Iv for the AES CTR
 #[derive(Debug, Clone, Default)]

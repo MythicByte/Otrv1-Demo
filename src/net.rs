@@ -54,6 +54,8 @@ pub enum MessageSend {
         mac: Vec<u8>,
         /// Old Hmac
         old_mac_key: Vec<u8>,
+        /// New Diffie hellman public key
+        new_open_dh_key_not_singed: Vec<u8>,
     },
     /// DH Offering for the other Client
     Dh(DiffieHellmanSend),

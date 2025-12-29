@@ -239,6 +239,7 @@ impl App {
         let pool = rt.block_on(async {
             let start_optins = SqliteConnectOptions::new()
                 .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+                .busy_timeout(Duration::from_secs(10))
                 .in_memory(true);
             let pool = SqlitePoolOptions::new()
                 .max_connections(4)

@@ -242,6 +242,7 @@ impl App {
                 .in_memory(true);
             let pool = SqlitePoolOptions::new()
                 .max_connections(4)
+                .min_connections(1)
                 .connect_with(start_optins)
                 .await
                 .expect("Sqlite Pool failed");
